@@ -19,7 +19,9 @@ class ApiTokenMiddleware
             ], 401);
         }
 
-        $user = DB::table('usuario')->where('api_token', $token)->first();
+        $user = DB::table('usuario')
+            ->where('api_token', $token)
+            ->first();
 
         if (!$user) {
             return response()->json([
@@ -28,7 +30,7 @@ class ApiTokenMiddleware
             ], 401);
         }
 
-        $request->merge(['auth_user' => $user]);
+        $request->attributes->set('auth_user', $user);
 
         return $next($request);
     }

@@ -68,17 +68,30 @@ class AuthApiController extends Controller
 
     public function me(Request $request)
     {
+        $user = $request->attributes->get('auth_user');
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Usuario autenticado no encontrado.'
+            ], 401);
+        }
+
         return response()->json([
             'success' => true,
-            'user' => $request->auth_user
+            'user' => $user
         ]);
     }
 
     public function logout(Request $request)
     {
-        DB::table('usuario')
-            ->where('id_usuario', $request->auth_user->id_usuario)
-            ->update(['api_token' => null]);
+        $user = $request->attributes->get('auth_user');
+
+        if ($user) {
+            DB::table('usuario')
+                ->where('id_usuario', $user->id_usuario)
+                ->update(['api_token' => null]);
+        }
 
         return response()->json([
             'success' => true,
