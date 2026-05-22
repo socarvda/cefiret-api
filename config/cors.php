@@ -1,9 +1,13 @@
 <?php
 
 return [
-    'paths' => ['api/*', 'sanctum/csrf-cookie', 'email/confirm/*', 'password/reset/*'],
+    'paths' => ['api/*', 'google/*', 'auth/*', 'email/*'],
     'allowed_methods' => ['*'],
-    'allowed_origins' => array_filter(explode(',', env('FRONTEND_URLS', '*'))),
+    'allowed_origins' => [
+        'http://127.0.0.1:5500',
+        'http://localhost:5500',
+        env('FRONTEND_URL', '*'),
+    ],
     'allowed_origins_patterns' => [],
     'allowed_headers' => ['*'],
     'exposed_headers' => [],
