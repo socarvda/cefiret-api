@@ -2,287 +2,400 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Http\Controllers\Controller;
 use App\Services\GoogleCalendarService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
-class CitaApiController extends ApiController
+class CitaApiController extends Controller
 {
-    public function __construct(private GoogleCalendarService $gcal)
+    protected GoogleCalendarService $gcal;
+
+    public function __construct(GoogleCalendarService $gcal)
     {
+        $this->gcal = $gcal;
     }
 
-    public function index(Request $request)
+    public function index()
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
+        try {
+            $citas = DB::table('cita')
+                ->join('usuario as paciente', 'cita.id_usuario', '=', 'paciente.id_usuario')
+                ->join('usuario as fisio', 'cita.id_fisioterapeuta', '=', 'fisio.id_usuario')
+                ->select(
+                    'cita.*',
+                    'paciente.nombre as paciente',
+                    'paciente.apaterno as paciente_apaterno',
+                    'paciente.amaterno as paciente_amaterno',
+                    'fisio.nombre as fisio',
+                    'fisio.apaterno as fisio_apaterno',
+                    'fisio.amaterno as fisio_amaterno'
+                )
+                ->orderBy('cita.fecha')
+                ->orderBy('cita.hora')
+                ->get();
+
+            $pacientes = DB::table('usuario')->where('id_tipo_usuario', 3)->orderBy('nombre')->get();
+            $fisios = DB::table('usuario')->where('id_tipo_usuario', 2)->orderBy('nombre')->get();
+
+            return response()->json([
+                'success' => true,
+                'citas' => $citas,
+                'pacientes' => $pacientes,
+                'fisios' => $fisios,
+                'google_connected' => $this->gcal->isAuthenticated(),
+                'calendar_embed_url' => env('GOOGLE_CALENDAR_EMBED_URL', '')
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar las citas: ' . $e->getMessage()
+            ], 500);
         }
-
-        $citas = DB::table('cita')
-            ->join('usuario as paciente', 'cita.id_usuario', '=', 'paciente.id_usuario')
-            ->join('usuario as fisio', 'cita.id_fisioterapeuta', '=', 'fisio.id_usuario')
-            ->select(
-                'cita.*',
-                'paciente.nombre as paciente_nombre',
-                'paciente.apaterno as paciente_apaterno',
-                'fisio.nombre as fisio_nombre',
-                'fisio.apaterno as fisio_apaterno'
-            )
-            ->orderBy('cita.fecha')
-            ->orderBy('cita.hora')
-            ->get();
-
-        return $this->success([
-            'citas' => $citas,
-            'google_connected' => $this->gcal->isAuthenticated(),
-            'calendar_embed_url' => env('GOOGLE_CALENDAR_EMBED_URL', ''),
-        ]);
-    }
-
-    public function opciones(Request $request)
-    {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
-
-        return $this->success([
-            'pacientes' => DB::table('usuario')->where('id_tipo_usuario', 3)->orderBy('nombre')->get(),
-            'fisioterapeutas' => DB::table('usuario')->where('id_tipo_usuario', 2)->orderBy('nombre')->get(),
-            'google_connected' => $this->gcal->isAuthenticated(),
-        ]);
     }
 
     public function store(Request $request)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
+        $hora = $request->input('hora') ?: $request->input('hora_fallback');
+        $request->merge(['hora' => $hora]);
 
-        $validated = $this->validatePayload($request);
-        $conflicto = $this->hayConflicto($validated['fisioterapeuta_id'], $validated['fecha'], $validated['hora']);
-
-        if ($conflicto) {
-            return $this->error('El fisioterapeuta ya tiene una cita en esa fecha y hora.', 422);
-        }
-
-        if ($this->gcal->isAuthenticated() && in_array(substr($validated['hora'], 0, 5), $this->gcal->getBusySlots($validated['fecha']), true)) {
-            return $this->error('Ese horario ya esta ocupado en Google Calendar.', 422);
-        }
-
-        $idCita = DB::table('cita')->insertGetId([
-            'id_usuario' => $validated['paciente_id'],
-            'id_fisioterapeuta' => $validated['fisioterapeuta_id'],
-            'fecha' => $validated['fecha'],
-            'hora' => $validated['hora'],
-            'motivo' => $validated['motivo'] ?? null,
-            'observaciones' => $validated['observaciones'] ?? null,
-            'estatus' => 'programada',
-            'google_event_id' => null,
+        $request->validate([
+            'paciente_id' => 'required|integer',
+            'fisioterapeuta_id' => 'required|integer',
+            'fecha' => 'required|date',
+            'hora' => 'required'
         ]);
 
-        $googleEventId = $this->crearEventoGoogle($idCita, $validated);
-        if ($googleEventId) {
-            DB::table('cita')->where('id_cita', $idCita)->update(['google_event_id' => $googleEventId]);
-        }
+        try {
+            $existe = DB::table('cita')
+                ->where('id_fisioterapeuta', $request->fisioterapeuta_id)
+                ->where('fecha', $request->fecha)
+                ->where('hora', $request->hora)
+                ->where('estatus', '!=', 'cancelada')
+                ->exists();
 
-        return $this->success(['id_cita' => $idCita, 'google_event_id' => $googleEventId], 'Cita creada.', 201);
-    }
+            if ($existe) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El fisioterapeuta ya tiene una cita en esa fecha y hora.'
+                ], 409);
+            }
 
-    public function show(Request $request, int $id)
-    {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
+            if ($this->gcal->isAuthenticated()) {
+                $ocupadasGoogle = $this->gcal->getBusySlots($request->fecha);
+                $horaCorta = substr($request->hora, 0, 5);
 
-        $cita = DB::table('cita')->where('id_cita', $id)->first();
+                if (in_array($horaCorta, $ocupadasGoogle)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ese horario ya está ocupado en Google Calendar.'
+                    ], 409);
+                }
+            }
 
-        return $cita ? $this->success($cita) : $this->error('Cita no encontrada.', 404);
-    }
+            $paciente = DB::table('usuario')->where('id_usuario', $request->paciente_id)->first();
+            $fisio = DB::table('usuario')->where('id_usuario', $request->fisioterapeuta_id)->first();
 
-    public function update(Request $request, int $id)
-    {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
+            if (!$paciente || !$fisio) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Paciente o fisioterapeuta no encontrado.'
+                ], 404);
+            }
 
-        $validated = $this->validatePayload($request);
-        $actual = DB::table('cita')->where('id_cita', $id)->first();
-
-        if (!$actual) {
-            return $this->error('Cita no encontrada.', 404);
-        }
-
-        $conflicto = $this->hayConflicto($validated['fisioterapeuta_id'], $validated['fecha'], $validated['hora'], $id);
-        if ($conflicto) {
-            return $this->error('El fisioterapeuta ya tiene una cita en esa fecha y hora.', 422);
-        }
-
-        DB::table('cita')->where('id_cita', $id)->update([
-            'id_usuario' => $validated['paciente_id'],
-            'id_fisioterapeuta' => $validated['fisioterapeuta_id'],
-            'fecha' => $validated['fecha'],
-            'hora' => $validated['hora'],
-            'motivo' => $validated['motivo'] ?? null,
-            'observaciones' => $validated['observaciones'] ?? null,
-        ]);
-
-        if ($this->gcal->isAuthenticated() && $actual->google_event_id) {
-            $this->gcal->deleteEvent($actual->google_event_id);
-            DB::table('cita')->where('id_cita', $id)->update([
-                'google_event_id' => $this->crearEventoGoogle($id, $validated),
+            $citaId = DB::table('cita')->insertGetId([
+                'id_usuario' => $request->paciente_id,
+                'id_fisioterapeuta' => $request->fisioterapeuta_id,
+                'fecha' => $request->fecha,
+                'hora' => $request->hora,
+                'motivo' => $request->motivo,
+                'estatus' => 'programada',
+                'google_event_id' => null,
             ]);
-        }
 
-        return $this->success(null, 'Cita actualizada.');
+            if ($this->gcal->isAuthenticated()) {
+                $googleEventId = $this->gcal->createEvent([
+                    'id_cita' => $citaId,
+                    'paciente' => $paciente->nombre . ' ' . $paciente->apaterno,
+                    'fisioterapeuta' => $fisio->nombre . ' ' . $fisio->apaterno,
+                    'fecha' => $request->fecha,
+                    'hora' => substr($request->hora, 0, 5),
+                    'motivo' => $request->motivo,
+                ]);
+
+                if ($googleEventId) {
+                    DB::table('cita')
+                        ->where('id_cita', $citaId)
+                        ->update(['google_event_id' => $googleEventId]);
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Cita creada correctamente.',
+                'id_cita' => $citaId,
+                'google_sync' => $this->gcal->isAuthenticated()
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al crear la cita: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
-    public function cancelar(Request $request, int $id)
+    public function show($id)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
+        $cita = DB::table('cita')
+            ->join('usuario as paciente', 'cita.id_usuario', '=', 'paciente.id_usuario')
+            ->join('usuario as fisio', 'cita.id_fisioterapeuta', '=', 'fisio.id_usuario')
+            ->where('cita.id_cita', $id)
+            ->select(
+                'cita.*',
+                'paciente.nombre as paciente',
+                'paciente.apaterno as paciente_apaterno',
+                'paciente.amaterno as paciente_amaterno',
+                'fisio.nombre as fisio',
+                'fisio.apaterno as fisio_apaterno',
+                'fisio.amaterno as fisio_amaterno'
+            )
+            ->first();
 
-        $cita = DB::table('cita')->where('id_cita', $id)->first();
         if (!$cita) {
-            return $this->error('Cita no encontrada.', 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'Cita no encontrada.'
+            ], 404);
         }
 
-        DB::table('cita')->where('id_cita', $id)->update(['estatus' => 'cancelada']);
-
-        if ($this->gcal->isAuthenticated() && $cita->google_event_id) {
-            $this->gcal->cancelEvent($cita->google_event_id);
-        }
-
-        return $this->success(null, 'Cita cancelada.');
+        return response()->json([
+            'success' => true,
+            'cita' => $cita
+        ]);
     }
 
-    public function destroy(Request $request, int $id)
+    public function update(Request $request, $id)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
+        $request->validate([
+            'paciente_id' => 'required|integer',
+            'fisioterapeuta_id' => 'required|integer',
+            'fecha' => 'required|date',
+            'hora' => 'required'
+        ]);
+
+        try {
+            $existe = DB::table('cita')
+                ->where('id_cita', '!=', $id)
+                ->where('id_fisioterapeuta', $request->fisioterapeuta_id)
+                ->where('fecha', $request->fecha)
+                ->where('hora', $request->hora)
+                ->where('estatus', '!=', 'cancelada')
+                ->exists();
+
+            if ($existe) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El fisioterapeuta ya tiene una cita en esa fecha y hora.'
+                ], 409);
+            }
+
+            $citaActual = DB::table('cita')->where('id_cita', $id)->first();
+
+            if (!$citaActual) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cita no encontrada.'
+                ], 404);
+            }
+
+            DB::table('cita')
+                ->where('id_cita', $id)
+                ->update([
+                    'id_usuario' => $request->paciente_id,
+                    'id_fisioterapeuta' => $request->fisioterapeuta_id,
+                    'fecha' => $request->fecha,
+                    'hora' => $request->hora,
+                    'motivo' => $request->motivo,
+                ]);
+
+            if ($this->gcal->isAuthenticated() && $citaActual->google_event_id) {
+                $this->gcal->deleteEvent($citaActual->google_event_id);
+
+                $paciente = DB::table('usuario')->where('id_usuario', $request->paciente_id)->first();
+                $fisio = DB::table('usuario')->where('id_usuario', $request->fisioterapeuta_id)->first();
+
+                $newGoogleEventId = $this->gcal->createEvent([
+                    'id_cita' => $id,
+                    'paciente' => $paciente->nombre . ' ' . $paciente->apaterno,
+                    'fisioterapeuta' => $fisio->nombre . ' ' . $fisio->apaterno,
+                    'fecha' => $request->fecha,
+                    'hora' => substr($request->hora, 0, 5),
+                    'motivo' => $request->motivo,
+                ]);
+
+                DB::table('cita')
+                    ->where('id_cita', $id)
+                    ->update(['google_event_id' => $newGoogleEventId]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Cita actualizada correctamente.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al actualizar la cita: ' . $e->getMessage()
+            ], 500);
         }
+    }
 
-        $cita = DB::table('cita')->where('id_cita', $id)->first();
-        if (!$cita) {
-            return $this->error('Cita no encontrada.', 404);
+    public function destroy($id)
+    {
+        try {
+            $cita = DB::table('cita')->where('id_cita', $id)->first();
+
+            if (!$cita) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cita no encontrada.'
+                ], 404);
+            }
+
+            if ($this->gcal->isAuthenticated() && $cita->google_event_id) {
+                $this->gcal->deleteEvent($cita->google_event_id);
+            }
+
+            DB::table('cita')->where('id_cita', $id)->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Cita eliminada correctamente.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al eliminar la cita: ' . $e->getMessage()
+            ], 500);
         }
+    }
 
-        if ($this->gcal->isAuthenticated() && $cita->google_event_id) {
-            $this->gcal->deleteEvent($cita->google_event_id);
+    public function cancelar($id)
+    {
+        try {
+            $cita = DB::table('cita')->where('id_cita', $id)->first();
+
+            if (!$cita) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cita no encontrada.'
+                ], 404);
+            }
+
+            DB::table('cita')
+                ->where('id_cita', $id)
+                ->update(['estatus' => 'cancelada']);
+
+            if ($this->gcal->isAuthenticated() && $cita->google_event_id) {
+                $this->gcal->cancelEvent($cita->google_event_id);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Cita cancelada correctamente.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cancelar la cita: ' . $e->getMessage()
+            ], 500);
         }
-
-        DB::table('cita')->where('id_cita', $id)->delete();
-
-        return $this->success(null, 'Cita eliminada.');
     }
 
     public function disponibilidad(Request $request)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
-
-        $fecha = $request->get('fecha');
         $fisio = $request->get('fisioterapeuta_id');
+        $fecha = $request->get('fecha');
 
         if (!$fecha) {
-            return $this->error('Fecha requerida.', 422);
+            return response()->json([
+                'success' => false,
+                'message' => 'Fecha requerida.'
+            ], 400);
         }
 
-        $horasBase = ['09:00', '10:00', '11:00', '12:00', '14:00', '15:00', '16:00', '17:00'];
-        $ocupadasBD = $fisio
-            ? DB::table('cita')
+        $horasBase = [
+            '09:00', '10:00', '11:00', '12:00',
+            '14:00', '15:00', '16:00', '17:00'
+        ];
+
+        $horasOcupadasBD = [];
+
+        if ($fisio) {
+            $horasOcupadasBD = DB::table('cita')
                 ->where('id_fisioterapeuta', $fisio)
                 ->where('fecha', $fecha)
                 ->where('estatus', '!=', 'cancelada')
                 ->pluck('hora')
-                ->map(fn($hora) => substr($hora, 0, 5))
-                ->toArray()
-            : [];
-        $ocupadasGoogle = $this->gcal->isAuthenticated() ? $this->gcal->getBusySlots($fecha) : [];
-        $ocupadas = array_values(array_unique(array_merge($ocupadasBD, $ocupadasGoogle)));
+                ->map(fn($h) => substr($h, 0, 5))
+                ->toArray();
+        }
 
-        return $this->success([
-            'disponibles' => array_values(array_filter($horasBase, fn($hora) => !in_array($hora, $ocupadas, true))),
-            'ocupadas' => $ocupadas,
+        $horasOcupadasGoogle = $this->gcal->isAuthenticated()
+            ? $this->gcal->getBusySlots($fecha)
+            : [];
+
+        $ocupadas = array_unique(array_merge($horasOcupadasBD, $horasOcupadasGoogle));
+        $disponibles = array_values(array_filter($horasBase, fn($hora) => !in_array($hora, $ocupadas)));
+
+        return response()->json([
+            'success' => true,
+            'disponibles' => $disponibles,
+            'ocupadas' => array_values($ocupadas),
             'google_sync' => $this->gcal->isAuthenticated(),
         ]);
     }
 
-    public function events(Request $request)
+    public function events()
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
+        try {
+            $rows = DB::table('cita')
+                ->join('usuario as paciente', 'cita.id_usuario', '=', 'paciente.id_usuario')
+                ->join('usuario as fisio', 'cita.id_fisioterapeuta', '=', 'fisio.id_usuario')
+                ->select('cita.*', 'paciente.nombre as paciente', 'fisio.nombre as fisio')
+                ->get();
+
+            $events = [];
+
+            foreach ($rows as $r) {
+                $start = $r->fecha;
+
+                if (!empty($r->hora)) {
+                    $start .= 'T' . substr($r->hora, 0, 5);
+                }
+
+                $events[] = [
+                    'id' => $r->id_cita,
+                    'title' => ($r->paciente ?? '') . ' - ' . ($r->fisio ?? ''),
+                    'start' => $start,
+                    'extendedProps' => [
+                        'motivo' => $r->motivo,
+                        'estatus' => $r->estatus ?? 'programada',
+                    ],
+                    'color' => match ($r->estatus ?? 'programada') {
+                        'cancelada' => '#ef4444',
+                        'completada' => '#22c55e',
+                        default => '#3b82f6',
+                    },
+                ];
+            }
+
+            return response()->json($events);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar los eventos: ' . $e->getMessage()
+            ], 500);
         }
-
-        $rows = DB::table('cita')
-            ->join('usuario as paciente', 'cita.id_usuario', '=', 'paciente.id_usuario')
-            ->join('usuario as fisio', 'cita.id_fisioterapeuta', '=', 'fisio.id_usuario')
-            ->select('cita.*', 'paciente.nombre as paciente', 'fisio.nombre as fisio')
-            ->get();
-
-        $events = $rows->map(function ($row) {
-            return [
-                'id' => $row->id_cita,
-                'title' => trim(($row->paciente ?? '') . ' - ' . ($row->fisio ?? '')),
-                'start' => $row->fecha . (!empty($row->hora) ? 'T' . substr($row->hora, 0, 5) : ''),
-                'extendedProps' => [
-                    'motivo' => $row->motivo,
-                    'estatus' => $row->estatus ?? 'programada',
-                ],
-                'color' => match ($row->estatus ?? 'programada') {
-                    'cancelada' => '#ef4444',
-                    'completada' => '#22c55e',
-                    default => '#3b82f6',
-                },
-            ];
-        });
-
-        return response()->json($events);
-    }
-
-    private function validatePayload(Request $request): array
-    {
-        $hora = $request->input('hora') ?: $request->input('hora_fallback');
-        $request->merge(['hora' => $hora]);
-
-        return $request->validate([
-            'paciente_id' => 'required|integer|exists:usuario,id_usuario',
-            'fisioterapeuta_id' => 'required|integer|exists:usuario,id_usuario',
-            'fecha' => 'required|date',
-            'hora' => 'required|string',
-            'motivo' => 'nullable|string',
-            'observaciones' => 'nullable|string',
-        ]);
-    }
-
-    private function hayConflicto(int $fisioId, string $fecha, string $hora, ?int $excepto = null): bool
-    {
-        return DB::table('cita')
-            ->when($excepto, fn($q) => $q->where('id_cita', '!=', $excepto))
-            ->where('id_fisioterapeuta', $fisioId)
-            ->where('fecha', $fecha)
-            ->where('hora', $hora)
-            ->where('estatus', '!=', 'cancelada')
-            ->exists();
-    }
-
-    private function crearEventoGoogle(int $idCita, array $data): ?string
-    {
-        if (!$this->gcal->isAuthenticated()) {
-            return null;
-        }
-
-        $paciente = DB::table('usuario')->where('id_usuario', $data['paciente_id'])->first();
-        $fisio = DB::table('usuario')->where('id_usuario', $data['fisioterapeuta_id'])->first();
-
-        return $this->gcal->createEvent([
-            'id_cita' => $idCita,
-            'paciente' => trim(($paciente->nombre ?? '') . ' ' . ($paciente->apaterno ?? '')),
-            'fisioterapeuta' => trim(($fisio->nombre ?? '') . ' ' . ($fisio->apaterno ?? '')),
-            'fecha' => $data['fecha'],
-            'hora' => substr($data['hora'], 0, 5),
-            'motivo' => $data['motivo'] ?? null,
-        ]);
     }
 }

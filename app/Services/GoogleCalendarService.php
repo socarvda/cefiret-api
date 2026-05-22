@@ -6,6 +6,7 @@ use Google\Client;
 use Google\Service\Calendar;
 use Google\Service\Calendar\Event;
 use Google\Service\Calendar\EventDateTime;
+use Illuminate\Support\Facades\Log;
 
 class GoogleCalendarService
 {
@@ -45,7 +46,8 @@ class GoogleCalendarService
         }
 
         $this->client->setAccessToken($token);
-        file_put_contents($this->tokenPath, json_encode($token));
+        $this->saveToken($token);
+
         $this->service = new Calendar($this->client);
     }
 
@@ -100,9 +102,10 @@ class GoogleCalendarService
             ]);
 
             $created = $this->service->events->insert($this->calendarId, $event);
+
             return $created->getId();
         } catch (\Exception $e) {
-            \Log::error('GoogleCalendar createEvent: ' . $e->getMessage());
+            Log::error('GoogleCalendar createEvent: ' . $e->getMessage());
             return null;
         }
     }
@@ -116,7 +119,7 @@ class GoogleCalendarService
         try {
             $this->service->events->delete($this->calendarId, $googleEventId);
         } catch (\Exception $e) {
-            \Log::warning('GoogleCalendar deleteEvent: ' . $e->getMessage());
+            Log::warning('GoogleCalendar deleteEvent: ' . $e->getMessage());
         }
     }
 
@@ -129,11 +132,13 @@ class GoogleCalendarService
         try {
             $event = $this->service->events->get($this->calendarId, $googleEventId);
             $summary = $event->getSummary();
-            $event->setSummary('❌ [CANCELADA] ' . $summary);
+
+            $event->setSummary('CANCELADA' . $summary);
             $event->setColorId('4');
+
             $this->service->events->update($this->calendarId, $googleEventId, $event);
         } catch (\Exception $e) {
-            \Log::warning('GoogleCalendar cancelEvent: ' . $e->getMessage());
+            Log::warning('GoogleCalendar cancelEvent: ' . $e->getMessage());
         }
     }
 
@@ -146,6 +151,7 @@ class GoogleCalendarService
         try {
             $timezone = env('APP_TIMEZONE', 'America/Mexico_City');
             $timeZone = new \DateTimeZone($timezone);
+
             $startOfDay = new \DateTime($fecha . ' 00:00:00', $timeZone);
             $endOfDay = new \DateTime($fecha . ' 23:59:59', $timeZone);
 
@@ -157,8 +163,10 @@ class GoogleCalendarService
             ]);
 
             $busySlots = [];
+
             foreach ($events->getItems() as $event) {
                 $start = $event->getStart()->getDateTime();
+
                 if ($start) {
                     $busySlots[] = date('H:i', strtotime($start));
                 }
@@ -166,7 +174,7 @@ class GoogleCalendarService
 
             return array_values(array_unique($busySlots));
         } catch (\Exception $e) {
-            \Log::error('GoogleCalendar getBusySlots: ' . $e->getMessage());
+            Log::error('GoogleCalendar getBusySlots: ' . $e->getMessage());
             return [];
         }
     }
@@ -178,35 +186,64 @@ class GoogleCalendarService
         }
 
         $token = json_decode(file_get_contents($this->tokenPath), true);
+
         if (!$token) {
             return;
         }
 
         $this->client->setAccessToken($token);
-
         $this->service = new Calendar($this->client);
+
+        if ($this->client->isAccessTokenExpired()) {
+            $this->refreshToken();
+        }
     }
 
     private function refreshToken(): bool
     {
+        $oldToken = $this->client->getAccessToken();
         $refreshToken = $this->client->getRefreshToken();
+
+        if (!$refreshToken && isset($oldToken['refresh_token'])) {
+            $refreshToken = $oldToken['refresh_token'];
+        }
+
         if (!$refreshToken) {
             return false;
         }
 
         try {
             $newToken = $this->client->fetchAccessTokenWithRefreshToken($refreshToken);
+
             if (isset($newToken['error'])) {
+                Log::error('GoogleCalendar refreshToken error: ' . json_encode($newToken));
                 return false;
             }
 
+            if (!isset($newToken['refresh_token'])) {
+                $newToken['refresh_token'] = $refreshToken;
+            }
+
             $this->client->setAccessToken($newToken);
-            file_put_contents($this->tokenPath, json_encode($this->client->getAccessToken()));
+            $this->saveToken($newToken);
+
             $this->service = new Calendar($this->client);
+
             return true;
         } catch (\Exception $e) {
-            \Log::error('GoogleCalendar refreshToken: ' . $e->getMessage());
+            Log::error('GoogleCalendar refreshToken: ' . $e->getMessage());
             return false;
         }
+    }
+
+    private function saveToken(array $token): void
+    {
+        $directory = dirname($this->tokenPath);
+
+        if (!is_dir($directory)) {
+            mkdir($directory, 0755, true);
+        }
+
+        file_put_contents($this->tokenPath, json_encode($token));
     }
 }

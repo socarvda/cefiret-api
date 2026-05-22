@@ -2,296 +2,377 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
-class RutinaApiController extends ApiController
+class RutinaApiController extends Controller
 {
-    public function index(Request $request)
+    public function index()
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
+        try {
+            $rutinas = DB::table('rutina as r')
+                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
+                ->join('usuario as u', 'e.id_usuario', '=', 'u.id_usuario')
+                ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
+                ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
+                ->select(
+                    'r.id_rutina',
+                    'r.fecha_asignacion',
+                    'u.id_usuario as paciente_id',
+                    'u.nombre',
+                    'u.apaterno',
+                    'u.amaterno',
+                    DB::raw('COALESCE(v.titulo, "") as video_titulo'),
+                    DB::raw('COALESCE(v.url, "") as video_url')
+                )
+                ->orderBy('r.fecha_asignacion', 'desc')
+                ->get();
+
+            $pacientes = DB::table('usuario')
+                ->where('id_tipo_usuario', 3)
+                ->orderBy('nombre')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'rutinas' => $rutinas,
+                'pacientes' => $pacientes
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar las rutinas: ' . $e->getMessage()
+            ], 500);
         }
-
-        $rutinas = DB::table('rutina as r')
-            ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
-            ->join('usuario as u', 'e.id_usuario', '=', 'u.id_usuario')
-            ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
-            ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
-            ->select(
-                'r.id_rutina',
-                'r.fecha_asignacion',
-                'u.id_usuario as paciente_id',
-                'u.nombre',
-                'u.apaterno',
-                'u.amaterno',
-                'rd.repeticiones',
-                'rd.series',
-                'rd.tiempo',
-                'rd.observaciones',
-                'v.id_video',
-                'v.titulo as video_titulo',
-                'v.descripcion as video_descripcion',
-                'v.url as video_url'
-            )
-            ->orderBy('r.fecha_asignacion', 'desc')
-            ->get();
-
-        return $this->success($rutinas);
     }
 
     public function store(Request $request)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
-
-        $validated = $request->validate([
-            'id_paciente' => 'required|integer|exists:usuario,id_usuario',
+        $request->validate([
+            'id_paciente' => 'required|integer',
             'fecha_asignacion' => 'required|date',
-            'video_titulo' => 'required|string|max:100',
+            'video_titulo' => 'required|string',
             'video_url' => 'required|string',
-            'video_descripcion' => 'nullable|string',
-            'repeticiones' => 'nullable|integer|min:1',
-            'series' => 'nullable|integer|min:1',
-            'tiempo' => 'nullable|integer|min:1',
+            'repeticiones' => 'nullable|integer',
+            'series' => 'nullable|integer',
+            'tiempo' => 'nullable|integer',
             'observaciones' => 'nullable|string',
-            'dias' => 'required|array|min:1',
-            'dias.*' => 'required|string|max:20',
+            'dias' => 'required|array|min:1'
         ]);
 
-        $idRutina = DB::transaction(function () use ($validated) {
-            $expediente = DB::table('expediente')->where('id_usuario', $validated['id_paciente'])->first();
+        try {
+            DB::beginTransaction();
 
-            $idExpediente = $expediente
-                ? $expediente->id_expediente
-                : DB::table('expediente')->insertGetId([
-                    'id_usuario' => $validated['id_paciente'],
+            $expediente = DB::table('expediente')
+                ->where('id_usuario', $request->id_paciente)
+                ->first();
+
+            if (!$expediente) {
+                $expedienteId = DB::table('expediente')->insertGetId([
+                    'id_usuario' => $request->id_paciente,
                     'fecha_creacion' => now()->format('Y-m-d'),
                     'sexo' => 'No especificado',
                     'edad' => 0,
                     'edo_civil' => 'No especificado',
                     'ocupacion' => 'No especificado',
-                    'alimentacion' => 'No especificado',
+                    'alimentacion' => 'Regular'
                 ]);
+            } else {
+                $expedienteId = $expediente->id_expediente;
+            }
 
-            $idVideo = DB::table('video')->insertGetId([
-                'titulo' => $validated['video_titulo'],
-                'descripcion' => $validated['video_descripcion'] ?? '',
-                'url' => $validated['video_url'],
+            $videoId = DB::table('video')->insertGetId([
+                'titulo' => $request->video_titulo,
+                'descripcion' => $request->video_descripcion ?? '',
+                'url' => $request->video_url
             ]);
 
-            $idRutina = DB::table('rutina')->insertGetId([
-                'fecha_asignacion' => $validated['fecha_asignacion'],
-                'id_expediente' => $idExpediente,
+            $rutinaId = DB::table('rutina')->insertGetId([
+                'fecha_asignacion' => $request->fecha_asignacion,
+                'id_expediente' => $expedienteId
             ]);
 
             DB::table('rutinadetalles')->insert([
-                'id_rutina' => $idRutina,
-                'id_video' => $idVideo,
-                'repeticiones' => $validated['repeticiones'] ?? null,
-                'series' => $validated['series'] ?? null,
-                'tiempo' => $validated['tiempo'] ?? null,
-                'observaciones' => $validated['observaciones'] ?? null,
+                'id_rutina' => $rutinaId,
+                'id_video' => $videoId,
+                'repeticiones' => $request->repeticiones,
+                'series' => $request->series,
+                'tiempo' => $request->tiempo,
+                'observaciones' => $request->observaciones
             ]);
 
-            foreach ($validated['dias'] as $dia) {
+            foreach ($request->dias as $dia) {
                 DB::table('rutina_dias')->insert([
-                    'id_rutina' => $idRutina,
-                    'dia' => $this->normalizarDia($dia),
+                    'id_rutina' => $rutinaId,
+                    'dia' => $dia
                 ]);
             }
 
-            return $idRutina;
-        });
+            DB::commit();
 
-        return $this->success(['id_rutina' => $idRutina], 'Rutina creada.', 201);
+            return response()->json([
+                'success' => true,
+                'message' => 'Rutina creada correctamente.',
+                'id_rutina' => $rutinaId
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al crear la rutina: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
-    public function show(Request $request, int $id)
+    public function show($id)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
+        try {
+            $rutina = DB::table('rutina as r')
+                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
+                ->join('usuario as u', 'e.id_usuario', '=', 'u.id_usuario')
+                ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
+                ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
+                ->where('r.id_rutina', $id)
+                ->select(
+                    'r.*',
+                    'u.id_usuario as paciente_id',
+                    'u.nombre',
+                    'u.apaterno',
+                    'u.amaterno',
+                    'v.id_video',
+                    'v.titulo',
+                    'v.descripcion',
+                    'v.url',
+                    'rd.id_detalle',
+                    'rd.repeticiones',
+                    'rd.series',
+                    'rd.tiempo',
+                    'rd.observaciones'
+                )
+                ->first();
+
+            if (!$rutina) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Rutina no encontrada.'
+                ], 404);
+            }
+
+            $dias = DB::table('rutina_dias')
+                ->where('id_rutina', $id)
+                ->pluck('dia')
+                ->toArray();
+
+            return response()->json([
+                'success' => true,
+                'rutina' => $rutina,
+                'dias' => $dias
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar la rutina: ' . $e->getMessage()
+            ], 500);
         }
-
-        $rutina = $this->rutinaQuery()->where('r.id_rutina', $id)->first();
-
-        if (!$rutina) {
-            return $this->error('Rutina no encontrada.', 404);
-        }
-
-        $dias = DB::table('rutina_dias')->where('id_rutina', $id)->pluck('dia');
-        $progresos = DB::table('progreso')->where('id_rutina', $id)->orderBy('fecha_realizacion', 'desc')->get();
-
-        return $this->success([
-            'rutina' => $rutina,
-            'dias' => $dias,
-            'progresos' => $progresos,
-            'average_progress' => round((float) ($progresos->avg('porcentaje') ?? 0), 2),
-        ]);
     }
 
-    public function update(Request $request, int $id)
+    public function update(Request $request, $id)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
-
-        $validated = $request->validate([
-            'fecha_asignacion' => 'nullable|date',
-            'video_titulo' => 'required|string|max:100',
+        $request->validate([
+            'video_titulo' => 'required|string',
             'video_url' => 'required|string',
-            'video_descripcion' => 'nullable|string',
-            'repeticiones' => 'nullable|integer|min:1',
-            'series' => 'nullable|integer|min:1',
-            'tiempo' => 'nullable|integer|min:1',
+            'repeticiones' => 'nullable|integer',
+            'series' => 'nullable|integer',
+            'tiempo' => 'nullable|integer',
             'observaciones' => 'nullable|string',
-            'dias' => 'required|array|min:1',
-            'dias.*' => 'required|string|max:20',
+            'dias' => 'required|array|min:1'
         ]);
 
-        $detalle = DB::table('rutinadetalles')->where('id_rutina', $id)->first();
-        if (!$detalle) {
-            return $this->error('Rutina no encontrada o sin detalles.', 404);
-        }
+        try {
+            DB::beginTransaction();
 
-        DB::transaction(function () use ($validated, $id, $detalle) {
-            if (!empty($validated['fecha_asignacion'])) {
-                DB::table('rutina')->where('id_rutina', $id)->update([
-                    'fecha_asignacion' => $validated['fecha_asignacion'],
-                ]);
+            $detalle = DB::table('rutinadetalles')
+                ->where('id_rutina', $id)
+                ->first();
+
+            if (!$detalle) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No existen detalles para esta rutina.'
+                ], 404);
             }
 
-            DB::table('video')->where('id_video', $detalle->id_video)->update([
-                'titulo' => $validated['video_titulo'],
-                'descripcion' => $validated['video_descripcion'] ?? '',
-                'url' => $validated['video_url'],
-            ]);
+            DB::table('video')
+                ->where('id_video', $detalle->id_video)
+                ->update([
+                    'titulo' => $request->video_titulo,
+                    'descripcion' => $request->video_descripcion ?? '',
+                    'url' => $request->video_url
+                ]);
 
-            DB::table('rutinadetalles')->where('id_rutina', $id)->update([
-                'repeticiones' => $validated['repeticiones'] ?? null,
-                'series' => $validated['series'] ?? null,
-                'tiempo' => $validated['tiempo'] ?? null,
-                'observaciones' => $validated['observaciones'] ?? null,
-            ]);
+            DB::table('rutinadetalles')
+                ->where('id_rutina', $id)
+                ->update([
+                    'repeticiones' => $request->repeticiones,
+                    'series' => $request->series,
+                    'tiempo' => $request->tiempo,
+                    'observaciones' => $request->observaciones
+                ]);
 
-            DB::table('rutina_dias')->where('id_rutina', $id)->delete();
-            foreach ($validated['dias'] as $dia) {
+            DB::table('rutina_dias')
+                ->where('id_rutina', $id)
+                ->delete();
+
+            foreach ($request->dias as $dia) {
                 DB::table('rutina_dias')->insert([
                     'id_rutina' => $id,
-                    'dia' => $this->normalizarDia($dia),
+                    'dia' => $dia
                 ]);
             }
-        });
 
-        return $this->success(null, 'Rutina actualizada.');
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Rutina actualizada correctamente.'
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al actualizar la rutina: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
-    public function destroy(Request $request, int $id)
+    public function destroy($id)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
+        try {
+            DB::beginTransaction();
 
-        DB::transaction(function () use ($id) {
             DB::table('rutina_dias')->where('id_rutina', $id)->delete();
-            DB::table('progreso')->where('id_rutina', $id)->delete();
             DB::table('rutinadetalles')->where('id_rutina', $id)->delete();
+            DB::table('progreso')->where('id_rutina', $id)->delete();
             DB::table('rutina')->where('id_rutina', $id)->delete();
-        });
 
-        return $this->success(null, 'Rutina eliminada.');
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Rutina eliminada correctamente.'
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al eliminar la rutina: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function asignarExistente(Request $request)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
-
-        $validated = $request->validate([
-            'id_paciente' => 'required|integer|exists:usuario,id_usuario',
-            'rutina_existente' => 'required|integer|exists:rutina,id_rutina',
+        $request->validate([
+            'id_paciente' => 'required|integer',
+            'rutina_existente' => 'required|integer'
         ]);
 
-        $idRutina = DB::transaction(function () use ($validated) {
-            $expediente = DB::table('expediente')->where('id_usuario', $validated['id_paciente'])->first();
+        try {
+            DB::beginTransaction();
+
+            $expediente = DB::table('expediente')
+                ->where('id_usuario', $request->id_paciente)
+                ->first();
+
             if (!$expediente) {
-                throw new \RuntimeException('El paciente no tiene expediente.');
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El paciente no tiene expediente.'
+                ], 404);
             }
 
-            $original = DB::table('rutina')->where('id_rutina', $validated['rutina_existente'])->first();
-            $detalle = DB::table('rutinadetalles')->where('id_rutina', $validated['rutina_existente'])->first();
-            $video = DB::table('video')->where('id_video', $detalle->id_video)->first();
-            $dias = DB::table('rutina_dias')->where('id_rutina', $validated['rutina_existente'])->pluck('dia');
+            $original = DB::table('rutina')
+                ->where('id_rutina', $request->rutina_existente)
+                ->first();
 
-            $idVideo = DB::table('video')->insertGetId([
+            if (!$original) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'La rutina original no existe.'
+                ], 404);
+            }
+
+            $detalle = DB::table('rutinadetalles')
+                ->where('id_rutina', $request->rutina_existente)
+                ->first();
+
+            if (!$detalle) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'La rutina original no tiene detalles.'
+                ], 404);
+            }
+
+            $video = DB::table('video')
+                ->where('id_video', $detalle->id_video)
+                ->first();
+
+            if (!$video) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'La rutina original no tiene video.'
+                ], 404);
+            }
+
+            $dias = DB::table('rutina_dias')
+                ->where('id_rutina', $request->rutina_existente)
+                ->pluck('dia');
+
+            $videoId = DB::table('video')->insertGetId([
                 'titulo' => $video->titulo,
                 'descripcion' => $video->descripcion,
-                'url' => $video->url,
+                'url' => $video->url
             ]);
 
-            $idRutina = DB::table('rutina')->insertGetId([
+            $newRutinaId = DB::table('rutina')->insertGetId([
                 'fecha_asignacion' => now()->format('Y-m-d'),
-                'id_expediente' => $expediente->id_expediente,
+                'id_expediente' => $expediente->id_expediente
             ]);
 
             DB::table('rutinadetalles')->insert([
-                'id_rutina' => $idRutina,
-                'id_video' => $idVideo,
+                'id_rutina' => $newRutinaId,
+                'id_video' => $videoId,
                 'repeticiones' => $detalle->repeticiones,
                 'series' => $detalle->series,
                 'tiempo' => $detalle->tiempo,
-                'observaciones' => $detalle->observaciones,
+                'observaciones' => $detalle->observaciones
             ]);
 
             foreach ($dias as $dia) {
-                DB::table('rutina_dias')->insert(['id_rutina' => $idRutina, 'dia' => $this->normalizarDia($dia)]);
+                DB::table('rutina_dias')->insert([
+                    'id_rutina' => $newRutinaId,
+                    'dia' => $dia
+                ]);
             }
 
-            return $idRutina;
-        });
+            DB::commit();
 
-        return $this->success(['id_rutina' => $idRutina], 'Rutina asignada.');
-    }
+            return response()->json([
+                'success' => true,
+                'message' => 'Rutina asignada correctamente.',
+                'id_rutina' => $newRutinaId
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
 
-    private function rutinaQuery()
-    {
-        return DB::table('rutina as r')
-            ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
-            ->join('usuario as u', 'e.id_usuario', '=', 'u.id_usuario')
-            ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
-            ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
-            ->select(
-                'r.*',
-                'u.id_usuario as paciente_id',
-                'u.nombre',
-                'u.apaterno',
-                'u.amaterno',
-                'rd.repeticiones',
-                'rd.series',
-                'rd.tiempo',
-                'rd.observaciones',
-                'v.id_video',
-                'v.titulo',
-                'v.descripcion',
-                'v.url'
-            );
-    }
-
-    private function normalizarDia(string $dia): string
-    {
-        $dia = trim(mb_strtolower($dia));
-
-        return match ($dia) {
-            'lunes' => 'Lunes',
-            'martes' => 'Martes',
-            'miercoles', 'miércoles', 'mi??rcoles' => 'Miercoles',
-            'jueves' => 'Jueves',
-            'viernes' => 'Viernes',
-            'sabado', 'sábado', 's??bado' => 'Sabado',
-            'domingo' => 'Domingo',
-            default => ucfirst($dia),
-        };
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al asignar rutina: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Http\Controllers\Controller;
 use App\Mail\CambiarContrasenniaMailable;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -10,68 +11,103 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
-class ResetPasswordApiController extends ApiController
+class ResetPasswordApiController extends Controller
 {
     public function sendResetLinkEmail(Request $request)
     {
-        $validated = $request->validate([
-            'correo' => 'required|email',
-        ]);
-
-        $user = DB::table('usuario')
-            ->select('id_usuario', 'nombre', 'apaterno', 'amaterno', 'correo', 'activo')
-            ->where('correo', $validated['correo'])
-            ->first();
-
-        if (!$user) {
-            return $this->error('Este correo no existe.', 404);
-        }
-
-        if ((int) ($user->activo ?? 1) !== 1) {
-            return $this->error('Aun no confirmas tu correo.', 403);
-        }
-
-        $token = Str::uuid()->toString();
-        $expiraEn = Carbon::now()->addMinutes(10);
-
-        DB::table('usuario')->where('id_usuario', $user->id_usuario)->update([
-            'token_recuperacion' => $token,
-            'token_expiracion' => $expiraEn,
+        $request->validate([
+            'correo' => 'required|email'
         ]);
 
         try {
-            Mail::to($user->correo)->send(new CambiarContrasenniaMailable(
-                trim($user->nombre . ' ' . $user->apaterno . ' ' . $user->amaterno),
-                $token
-            ));
-        } catch (\Throwable) {
-            // El token queda disponible en la respuesta para pruebas si el correo no esta configurado.
-        }
+            $user = DB::table('usuario')
+                ->select('id_usuario', 'nombre', 'apaterno', 'amaterno', 'activo', 'correo')
+                ->where('correo', $request->correo)
+                ->first();
 
-        return $this->success(['token' => $token, 'expires_at' => $expiraEn], 'Revisa tu correo.');
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Este correo no existe.'
+                ], 404);
+            }
+
+            if (($user->activo ?? 1) != 1) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Aún no confirmas tu correo.'
+                ], 403);
+            }
+
+            $nombre = trim($user->nombre . ' ' . $user->apaterno . ' ' . $user->amaterno);
+            $token = Str::uuid()->toString();
+            $expiraEn = Carbon::now()->addMinutes(10);
+
+            DB::table('usuario')
+                ->where('correo', $request->correo)
+                ->update([
+                    'token_recuperacion' => $token,
+                    'token_expiracion' => $expiraEn,
+                ]);
+
+            Mail::to($request->correo)->send(new CambiarContrasenniaMailable($nombre, $token));
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Revisa tu correo para cambiar la contraseña.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Hubo un error en el servidor: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function resetPassword(Request $request)
     {
-        $validated = $request->validate([
-            'token' => 'required|string',
-            'contrasena' => 'required|string|min:8',
-            'contrasena_confirmation' => 'required|same:contrasena',
+        $request->validate([
+            'contrasennia' => 'required|min:8',
+            'recontrasennia' => 'required|same:contrasennia',
+            'mytoken' => 'required'
         ]);
 
-        $user = DB::table('usuario')->where('token_recuperacion', $validated['token'])->first();
+        try {
+            $user = DB::table('usuario')
+                ->where('token_recuperacion', $request->mytoken)
+                ->first();
 
-        if (!$user || !$user->token_expiracion || Carbon::parse($user->token_expiracion)->isPast()) {
-            return $this->error('Token invalido o expirado.', 422);
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Token inválido.'
+                ], 404);
+            }
+
+            if ($user->token_expiracion && Carbon::parse($user->token_expiracion)->lessThan(Carbon::now())) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El enlace ha expirado.'
+                ], 410);
+            }
+
+            DB::table('usuario')
+                ->where('token_recuperacion', $request->mytoken)
+                ->update([
+                    'contrasena' => Hash::make($request->contrasennia),
+                    'token_recuperacion' => null,
+                    'token_expiracion' => null,
+                ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Cambio de contraseña exitoso.'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Hubo un error en el servidor: ' . $e->getMessage()
+            ], 500);
         }
-
-        DB::table('usuario')->where('id_usuario', $user->id_usuario)->update([
-            'contrasena' => Hash::make($validated['contrasena']),
-            'token_recuperacion' => null,
-            'token_expiracion' => null,
-            'api_token' => null,
-        ]);
-
-        return $this->success(null, 'Contrasena actualizada.');
     }
 }

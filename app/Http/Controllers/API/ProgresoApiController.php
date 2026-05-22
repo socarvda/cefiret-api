@@ -2,134 +2,175 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
-class ProgresoApiController extends ApiController
+class ProgresoApiController extends Controller
 {
-    public function pacientes(Request $request)
+    public function index()
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
+        try {
+            $pacientes = DB::table('usuario')
+                ->where('id_tipo_usuario', 3)
+                ->orderBy('nombre')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'pacientes' => $pacientes
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar pacientes: ' . $e->getMessage()
+            ], 500);
         }
-
-        $pacientes = DB::table('usuario')
-            ->where('id_tipo_usuario', 3)
-            ->select('id_usuario', 'nombre', 'apaterno', 'amaterno', 'correo', 'telefono')
-            ->orderBy('nombre')
-            ->get();
-
-        return $this->success($pacientes);
     }
 
-    public function show(Request $request, int $idPaciente)
+    public function show($idPaciente)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
+        try {
+            $paciente = DB::table('usuario')
+                ->where('id_usuario', $idPaciente)
+                ->first();
+
+            if (!$paciente) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Paciente no encontrado.'
+                ], 404);
+            }
+
+            $rutina = DB::table('rutina as r')
+                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
+                ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
+                ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
+                ->where('e.id_usuario', $idPaciente)
+                ->select(
+                    'r.id_rutina',
+                    'r.fecha_asignacion',
+                    'v.titulo as video_titulo',
+                    'v.url as video_url',
+                    'rd.repeticiones',
+                    'rd.series',
+                    'rd.tiempo',
+                    'rd.observaciones'
+                )
+                ->orderBy('r.fecha_asignacion', 'desc')
+                ->first();
+
+            $progresos = DB::table('progreso as p')
+                ->join('rutina as r', 'p.id_rutina', '=', 'r.id_rutina')
+                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
+                ->where('e.id_usuario', $idPaciente)
+                ->select('p.*', 'r.fecha_asignacion')
+                ->orderBy('p.fecha_realizacion', 'desc')
+                ->get();
+
+            $averageProgress = $progresos->avg('porcentaje') ?? 0;
+
+            return response()->json([
+                'success' => true,
+                'paciente' => $paciente,
+                'rutina' => $rutina,
+                'progresos' => $progresos,
+                'averageProgress' => $averageProgress
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar el progreso: ' . $e->getMessage()
+            ], 500);
         }
-
-        $paciente = DB::table('usuario')
-            ->select('id_usuario', 'nombre', 'apaterno', 'amaterno', 'correo', 'telefono')
-            ->where('id_usuario', $idPaciente)
-            ->where('id_tipo_usuario', 3)
-            ->first();
-
-        if (!$paciente) {
-            return $this->error('Paciente no encontrado.', 404);
-        }
-
-        $rutina = $this->ultimaRutinaPaciente($idPaciente);
-        $progresos = $this->progresosPaciente($idPaciente);
-
-        return $this->success([
-            'paciente' => $paciente,
-            'ultima_rutina' => $rutina,
-            'progresos' => $progresos,
-            'average_progress' => round((float) ($progresos->avg('porcentaje') ?? 0), 2),
-            'total_records' => $progresos->count(),
-        ]);
     }
 
     public function store(Request $request)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
+        $request->validate([
+            'id_rutina' => 'required|integer',
+            'porcentaje' => 'required|numeric|min:0|max:100',
+            'comentarios' => 'nullable|string|max:1000'
+        ]);
+
+        try {
+            $rutina = DB::table('rutina')
+                ->where('id_rutina', $request->id_rutina)
+                ->first();
+
+            if (!$rutina) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Rutina no encontrada.'
+                ], 404);
+            }
+
+            $idProgreso = DB::table('progreso')->insertGetId([
+                'id_rutina' => $request->id_rutina,
+                'fecha_realizacion' => now()->format('Y-m-d'),
+                'estado' => 'Registrado',
+                'comentarios' => $request->comentarios,
+                'porcentaje' => $request->porcentaje,
+                'desbloqueado' => 0
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Progreso registrado correctamente.',
+                'id_progreso' => $idProgreso
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al guardar progreso: ' . $e->getMessage()
+            ], 500);
         }
-
-        $validated = $request->validate([
-            'id_rutina' => 'required|integer|exists:rutina,id_rutina',
-            'id_ejercicio' => 'nullable|integer|exists:ejercicio,id_ejercicio',
-            'fecha_realizacion' => 'nullable|date',
-            'estado' => 'nullable|string|max:50',
-            'porcentaje' => 'required|integer|min:0|max:100',
-            'comentarios' => 'nullable|string|max:1000',
-            'evidencia' => 'nullable|string',
-            'desbloqueado' => 'nullable|boolean',
-        ]);
-
-        $id = DB::table('progreso')->insertGetId([
-            'id_rutina' => $validated['id_rutina'],
-            'id_ejercicio' => $validated['id_ejercicio'] ?? null,
-            'fecha_realizacion' => $validated['fecha_realizacion'] ?? now()->format('Y-m-d'),
-            'estado' => $validated['estado'] ?? 'Registrado',
-            'comentarios' => $validated['comentarios'] ?? null,
-            'evidencia' => $validated['evidencia'] ?? null,
-            'porcentaje' => $validated['porcentaje'],
-            'desbloqueado' => (int) ($validated['desbloqueado'] ?? 0),
-        ]);
-
-        return $this->success(['id_progreso' => $id], 'Progreso registrado.', 201);
     }
 
-    public function byRutina(Request $request, int $idRutina)
+    public function report($idPaciente)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
+        try {
+            $paciente = DB::table('usuario')
+                ->where('id_usuario', $idPaciente)
+                ->first();
+
+            if (!$paciente) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Paciente no encontrado.'
+                ], 404);
+            }
+
+            $progresos = DB::table('progreso as p')
+                ->join('rutina as r', 'p.id_rutina', '=', 'r.id_rutina')
+                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
+                ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
+                ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
+                ->where('e.id_usuario', $idPaciente)
+                ->select(
+                    'p.*',
+                    'r.fecha_asignacion',
+                    'v.titulo as video_titulo',
+                    'rd.repeticiones',
+                    'rd.series',
+                    'rd.tiempo',
+                    'rd.observaciones'
+                )
+                ->orderBy('p.fecha_realizacion', 'desc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'paciente' => $paciente,
+                'progresos' => $progresos,
+                'averageProgress' => $progresos->avg('porcentaje') ?? 0,
+                'totalRecords' => $progresos->count()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar reporte: ' . $e->getMessage()
+            ], 500);
         }
-
-        $progresos = DB::table('progreso')
-            ->where('id_rutina', $idRutina)
-            ->orderBy('fecha_realizacion', 'desc')
-            ->get();
-
-        return $this->success([
-            'progresos' => $progresos,
-            'average_progress' => round((float) ($progresos->avg('porcentaje') ?? 0), 2),
-        ]);
-    }
-
-    private function progresosPaciente(int $idPaciente)
-    {
-        return DB::table('progreso as p')
-            ->join('rutina as r', 'p.id_rutina', '=', 'r.id_rutina')
-            ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
-            ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
-            ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
-            ->where('e.id_usuario', $idPaciente)
-            ->select('p.*', 'r.fecha_asignacion', 'v.titulo as video_titulo')
-            ->orderBy('p.fecha_realizacion', 'desc')
-            ->get();
-    }
-
-    private function ultimaRutinaPaciente(int $idPaciente): ?object
-    {
-        return DB::table('rutina as r')
-            ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
-            ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
-            ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
-            ->where('e.id_usuario', $idPaciente)
-            ->select(
-                'r.id_rutina',
-                'r.fecha_asignacion',
-                'rd.repeticiones',
-                'rd.series',
-                'rd.tiempo',
-                'rd.observaciones',
-                'v.titulo as video_titulo',
-                'v.url as video_url'
-            )
-            ->orderBy('r.fecha_asignacion', 'desc')
-            ->orderBy('r.id_rutina', 'desc')
-            ->first();
     }
 }

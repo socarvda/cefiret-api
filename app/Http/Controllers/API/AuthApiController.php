@@ -2,81 +2,87 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
-class AuthApiController extends ApiController
+class AuthApiController extends Controller
 {
     public function login(Request $request)
     {
-        $validated = $request->validate([
+        $request->validate([
             'email' => 'required|email',
-            'password' => 'required|string',
+            'password' => 'required'
         ]);
 
-        $user = DB::table('usuario')->where('correo', $validated['email'])->first();
+        $user = DB::table('usuario')->where('correo', $request->email)->first();
 
         if (!$user) {
-            return $this->error('Correo o contrasena incorrectos.', 401);
+            return response()->json(['success' => false, 'message' => 'Correo o contraseña incorrectos'], 401);
         }
 
-        $password = $user->contrasena ?? '';
-        $valid = str_starts_with($password, '$2y$') || str_starts_with($password, '$2a$') || str_starts_with($password, '$argon')
-            ? Hash::check($validated['password'], $password)
-            : hash_equals($password, $validated['password']);
+        $passwordValid = false;
 
-        if (!$valid) {
-            return $this->error('Correo o contrasena incorrectos.', 401);
+        if (strlen($user->contrasena) === 60 && str_starts_with($user->contrasena, '$2y$')) {
+            $passwordValid = Hash::check($request->password, $user->contrasena);
+        } else {
+            $passwordValid = $user->contrasena === $request->password;
+
+            if ($passwordValid) {
+                DB::table('usuario')
+                    ->where('id_usuario', $user->id_usuario)
+                    ->update(['contrasena' => Hash::make($request->password)]);
+            }
         }
 
-        if ((int) ($user->activo ?? 1) !== 1) {
-            return $this->error('Aun no confirmas tu correo.', 403);
+        if (!$passwordValid) {
+            return response()->json(['success' => false, 'message' => 'Correo o contraseña incorrectos'], 401);
         }
 
-        $token = hash('sha256', Str::random(80));
-        $updates = ['api_token' => $token];
-
-        if (!str_starts_with($password, '$2y$') && !str_starts_with($password, '$2a$') && !str_starts_with($password, '$argon')) {
-            $updates['contrasena'] = Hash::make($validated['password']);
+        if (($user->activo ?? 1) != 1) {
+            return response()->json(['success' => false, 'message' => 'Aún no confirmas tu correo.'], 403);
         }
 
-        DB::table('usuario')->where('id_usuario', $user->id_usuario)->update($updates);
+        $token = Str::random(80);
 
-        $freshUser = DB::table('usuario')
-            ->select('id_usuario', 'nombre', 'apaterno', 'amaterno', 'correo', 'telefono', 'fecha_nac', 'id_tipo_usuario', 'activo')
+        DB::table('usuario')
             ->where('id_usuario', $user->id_usuario)
-            ->first();
+            ->update(['api_token' => $token]);
 
-        return $this->success([
+        return response()->json([
+            'success' => true,
+            'message' => 'Login correcto',
             'token' => $token,
-            'user' => $freshUser,
-        ], 'Login correcto.');
+            'user' => [
+                'id_usuario' => $user->id_usuario,
+                'nombre' => $user->nombre,
+                'apaterno' => $user->apaterno,
+                'amaterno' => $user->amaterno,
+                'correo' => $user->correo,
+                'id_tipo_usuario' => $user->id_tipo_usuario,
+            ]
+        ]);
     }
 
     public function me(Request $request)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
-
-        $user = DB::table('usuario')
-            ->select('id_usuario', 'nombre', 'apaterno', 'amaterno', 'correo', 'telefono', 'fecha_nac', 'id_tipo_usuario', 'activo')
-            ->where('api_token', $request->bearerToken())
-            ->first();
-
-        return $this->success($user);
+        return response()->json([
+            'success' => true,
+            'user' => $request->auth_user
+        ]);
     }
 
     public function logout(Request $request)
     {
-        if ($auth = $this->requireAuth($request)) {
-            return $auth;
-        }
+        DB::table('usuario')
+            ->where('id_usuario', $request->auth_user->id_usuario)
+            ->update(['api_token' => null]);
 
-        DB::table('usuario')->where('api_token', $request->bearerToken())->update(['api_token' => null]);
-
-        return $this->success(null, 'Sesion cerrada.');
+        return response()->json([
+            'success' => true,
+            'message' => 'Sesión cerrada correctamente'
+        ]);
     }
 }
