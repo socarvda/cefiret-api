@@ -9,33 +9,61 @@ use App\Http\Controllers\API\RutinaApiController;
 use App\Http\Controllers\API\CitaApiController;
 use App\Http\Controllers\API\ProgresoApiController;
 use App\Http\Controllers\API\ResetPasswordApiController;
+use App\Http\Controllers\API\MobileApiController;
+
+/*
+| Rutas públicas
+*/
 
 Route::post('/login', [AuthApiController::class, 'login']);
-Route::post('/logout', [AuthApiController::class, 'logout']);
 
 Route::post('/password/email', [ResetPasswordApiController::class, 'sendResetLinkEmail']);
 Route::put('/password/update', [ResetPasswordApiController::class, 'resetPassword']);
 
+/*
+| Rutas protegidas por token
+| Para usar estas rutas debes enviar:
+| Authorization: Bearer TU_TOKEN
+*/
+
 Route::middleware('api.token')->group(function () {
+    Route::post('/logout', [AuthApiController::class, 'logout']);
+
     Route::get('/me', [AuthApiController::class, 'me']);
     Route::get('/dashboard', [DashboardApiController::class, 'index']);
+
+    /*
+    | Usuarios
+    */
 
     Route::get('/usuarios', [UsuarioApiController::class, 'index']);
     Route::post('/usuarios', [UsuarioApiController::class, 'store']);
     Route::get('/usuarios/{id}', [UsuarioApiController::class, 'show']);
     Route::put('/usuarios/{id}', [UsuarioApiController::class, 'update']);
 
+    /*
+    | Expedientes
+    */
+
     Route::get('/expedientes/pacientes', [ExpedienteApiController::class, 'pacientes']);
     Route::get('/expedientes/pacientes/{id}', [ExpedienteApiController::class, 'show']);
     Route::post('/expedientes/pacientes/{id}', [ExpedienteApiController::class, 'store']);
     Route::get('/expedientes/pacientes/{id}/citas', [ExpedienteApiController::class, 'citas']);
 
+    /*
+    | Rutinas
+    */
+
     Route::get('/rutinas', [RutinaApiController::class, 'index']);
     Route::post('/rutinas', [RutinaApiController::class, 'store']);
+    Route::post('/rutinas/asignar-existente', [RutinaApiController::class, 'asignarExistente']);
     Route::get('/rutinas/{id}', [RutinaApiController::class, 'show']);
     Route::put('/rutinas/{id}', [RutinaApiController::class, 'update']);
     Route::delete('/rutinas/{id}', [RutinaApiController::class, 'destroy']);
-    Route::post('/rutinas/asignar-existente', [RutinaApiController::class, 'asignarExistente']);
+
+    /*
+    | Citas
+    */
 
     Route::get('/citas', [CitaApiController::class, 'index']);
     Route::post('/citas', [CitaApiController::class, 'store']);
@@ -46,8 +74,22 @@ Route::middleware('api.token')->group(function () {
     Route::delete('/citas/{id}', [CitaApiController::class, 'destroy']);
     Route::post('/citas/{id}/cancelar', [CitaApiController::class, 'cancelar']);
 
+    /*
+    |--------------------------------------------------------------------------
+    | Progreso
+    |--------------------------------------------------------------------------
+    */
+
     Route::get('/progreso', [ProgresoApiController::class, 'index']);
+    Route::post('/progreso', [ProgresoApiController::class, 'store']);
     Route::get('/progreso/paciente/{id}', [ProgresoApiController::class, 'show']);
     Route::get('/progreso/paciente/{id}/reporte', [ProgresoApiController::class, 'report']);
-    Route::post('/progreso', [ProgresoApiController::class, 'store']);
+
+    /*
+    | Endpoints para app móvil
+    */
+
+    Route::get('/paciente/{id}/videos', [MobileApiController::class, 'videosPaciente']);
+    Route::get('/paciente/{id}/citas', [MobileApiController::class, 'citasPaciente']);
+    Route::get('/pagos/{id}', [MobileApiController::class, 'pagosPaciente']);
 });
