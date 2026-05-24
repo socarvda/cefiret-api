@@ -89,7 +89,10 @@ class ProgresoApiController extends Controller
                 ->where('e.id_usuario', $idPaciente)
                 ->select('p.*', 'r.fecha_asignacion')
                 ->orderBy('p.fecha_realizacion', 'desc')
+                ->orderBy('p.id_progreso', 'desc')
                 ->get();
+
+            $ultimoProgreso = $progresos->first();
 
             $averageProgress = $progresos->avg('porcentaje') ?? 0;
 
@@ -98,6 +101,7 @@ class ProgresoApiController extends Controller
                 'paciente' => $paciente,
                 'rutina' => $rutina,
                 'progresos' => $progresos,
+                'ultimoProgreso' => $ultimoProgreso,
                 'averageProgress' => $averageProgress
             ]);
         } catch (\Exception $e) {
@@ -128,14 +132,63 @@ class ProgresoApiController extends Controller
                 ], 404);
             }
 
-            $idProgreso = DB::table('progreso')->insertGetId([
-                'id_rutina' => $request->id_rutina,
-                'fecha_realizacion' => now()->format('Y-m-d'),
-                'estado' => 'Registrado',
-                'comentarios' => $request->comentarios,
-                'porcentaje' => $request->porcentaje,
-                'desbloqueado' => 0
-            ]);
+            $nuevoPorcentaje = (float) $request->porcentaje;
+            $fechaHoy = now()->format('Y-m-d');
+
+            $ultimoProgreso = DB::table('progreso')
+                ->where('id_rutina', $request->id_rutina)
+                ->orderBy('fecha_realizacion', 'desc')
+                ->orderBy('id_progreso', 'desc')
+                ->first();
+
+            if ($ultimoProgreso) {
+                $ultimoPorcentaje = (float) $ultimoProgreso->porcentaje;
+
+                if ($ultimoPorcentaje >= 100) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Esta rutina ya tiene un avance del 100%. No se pueden registrar más avances.'
+                    ], 409);
+                }
+
+                if ($nuevoPorcentaje <= $ultimoPorcentaje) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'El nuevo avance debe ser mayor al último avance registrado (' . $ultimoPorcentaje . '%).'
+                    ], 409);
+                }
+            }
+
+            $progresoHoy = DB::table('progreso')
+                ->where('id_rutina', $request->id_rutina)
+                ->where('fecha_realizacion', $fechaHoy)
+                ->orderBy('id_progreso', 'desc')
+                ->first();
+
+            if ($progresoHoy) {
+                DB::table('progreso')
+                    ->where('id_progreso', $progresoHoy->id_progreso)
+                    ->update([
+                        'estado' => $nuevoPorcentaje >= 100 ? 'Completado' : 'Registrado',
+                        'comentarios' => $request->comentarios,
+                        'porcentaje' => $nuevoPorcentaje,
+                        'desbloqueado' => $nuevoPorcentaje >= 100 ? 1 : 0
+                    ]);
+
+                $idProgreso = $progresoHoy->id_progreso;
+                $accion = 'actualizado';
+            } else {
+                $idProgreso = DB::table('progreso')->insertGetId([
+                    'id_rutina' => $request->id_rutina,
+                    'fecha_realizacion' => $fechaHoy,
+                    'estado' => $nuevoPorcentaje >= 100 ? 'Completado' : 'Registrado',
+                    'comentarios' => $request->comentarios,
+                    'porcentaje' => $nuevoPorcentaje,
+                    'desbloqueado' => $nuevoPorcentaje >= 100 ? 1 : 0
+                ]);
+
+                $accion = 'registrado';
+            }
 
             $paciente = DB::table('rutina as r')
                 ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
@@ -147,15 +200,18 @@ class ProgresoApiController extends Controller
             if ($paciente) {
                 NotificacionService::crear(
                     (int) $paciente->id_usuario,
-                    'Se registró un avance de ' . $request->porcentaje . '% en tu rutina.'
+                    'Se ' . $accion . ' un avance de ' . $nuevoPorcentaje . '% en tu rutina.'
                 );
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Progreso registrado correctamente.',
-                'id_progreso' => $idProgreso
-            ], 201);
+                'message' => $accion === 'actualizado'
+                    ? 'Progreso de hoy actualizado correctamente.'
+                    : 'Progreso registrado correctamente.',
+                'id_progreso' => $idProgreso,
+                'accion' => $accion
+            ], $accion === 'actualizado' ? 200 : 201);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -205,12 +261,16 @@ class ProgresoApiController extends Controller
                     'rd.observaciones'
                 )
                 ->orderBy('p.fecha_realizacion', 'desc')
+                ->orderBy('p.id_progreso', 'desc')
                 ->get();
+
+            $ultimoProgreso = $progresos->first();
 
             return response()->json([
                 'success' => true,
                 'paciente' => $paciente,
                 'progresos' => $progresos,
+                'ultimoProgreso' => $ultimoProgreso,
                 'averageProgress' => $progresos->avg('porcentaje') ?? 0,
                 'totalRecords' => $progresos->count()
             ]);
