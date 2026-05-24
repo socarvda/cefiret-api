@@ -3,28 +3,27 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\NotificacionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class ProgresoApiController extends Controller
 {
-    private array $safeUserColumns = [
-        'id_usuario',
-        'nombre',
-        'apaterno',
-        'amaterno',
-        'fecha_nac',
-        'telefono',
-        'correo',
-        'id_tipo_usuario',
-        'activo',
-    ];
-
     public function index()
     {
         try {
             $pacientes = DB::table('usuario')
-                ->select($this->safeUserColumns)
+                ->select(
+                    'id_usuario',
+                    'nombre',
+                    'apaterno',
+                    'amaterno',
+                    'correo',
+                    'telefono',
+                    'fecha_nac',
+                    'id_tipo_usuario',
+                    'activo'
+                )
                 ->where('id_tipo_usuario', 3)
                 ->orderBy('nombre')
                 ->get();
@@ -45,9 +44,18 @@ class ProgresoApiController extends Controller
     {
         try {
             $paciente = DB::table('usuario')
-                ->select($this->safeUserColumns)
+                ->select(
+                    'id_usuario',
+                    'nombre',
+                    'apaterno',
+                    'amaterno',
+                    'correo',
+                    'telefono',
+                    'fecha_nac',
+                    'id_tipo_usuario',
+                    'activo'
+                )
                 ->where('id_usuario', $idPaciente)
-                ->where('id_tipo_usuario', 3)
                 ->first();
 
             if (!$paciente) {
@@ -122,13 +130,26 @@ class ProgresoApiController extends Controller
 
             $idProgreso = DB::table('progreso')->insertGetId([
                 'id_rutina' => $request->id_rutina,
-                'id_ejercicio' => $request->id_ejercicio ?? null,
                 'fecha_realizacion' => now()->format('Y-m-d'),
                 'estado' => 'Registrado',
                 'comentarios' => $request->comentarios,
                 'porcentaje' => $request->porcentaje,
                 'desbloqueado' => 0
             ]);
+
+            $paciente = DB::table('rutina as r')
+                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
+                ->join('usuario as u', 'e.id_usuario', '=', 'u.id_usuario')
+                ->where('r.id_rutina', $request->id_rutina)
+                ->select('u.id_usuario', 'u.nombre', 'u.apaterno')
+                ->first();
+
+            if ($paciente) {
+                NotificacionService::crear(
+                    (int) $paciente->id_usuario,
+                    'Se registró un avance de ' . $request->porcentaje . '% en tu rutina.'
+                );
+            }
 
             return response()->json([
                 'success' => true,
@@ -147,9 +168,18 @@ class ProgresoApiController extends Controller
     {
         try {
             $paciente = DB::table('usuario')
-                ->select($this->safeUserColumns)
+                ->select(
+                    'id_usuario',
+                    'nombre',
+                    'apaterno',
+                    'amaterno',
+                    'correo',
+                    'telefono',
+                    'fecha_nac',
+                    'id_tipo_usuario',
+                    'activo'
+                )
                 ->where('id_usuario', $idPaciente)
-                ->where('id_tipo_usuario', 3)
                 ->first();
 
             if (!$paciente) {

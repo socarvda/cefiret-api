@@ -10,6 +10,7 @@ use App\Http\Controllers\API\CitaApiController;
 use App\Http\Controllers\API\ProgresoApiController;
 use App\Http\Controllers\API\ResetPasswordApiController;
 use App\Http\Controllers\API\MobileApiController;
+use App\Http\Controllers\API\NotificacionApiController;
 
 /*
 |--------------------------------------------------------------------------
@@ -26,8 +27,6 @@ Route::put('/password/update', [ResetPasswordApiController::class, 'resetPasswor
 |--------------------------------------------------------------------------
 | Rutas protegidas por token
 |--------------------------------------------------------------------------
-| Para usar estas rutas:
-| Authorization: Bearer TU_TOKEN
 */
 
 Route::middleware('api.token')->group(function () {
@@ -38,20 +37,30 @@ Route::middleware('api.token')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
+    | Notificaciones
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/notificaciones', [NotificacionApiController::class, 'index']);
+    Route::get('/notificaciones/no-leidas', [NotificacionApiController::class, 'noLeidas']);
+    Route::put('/notificaciones/{id}/leida', [NotificacionApiController::class, 'marcarLeida']);
+    Route::put('/notificaciones/marcar-todas-leidas', [NotificacionApiController::class, 'marcarTodasLeidas']);
+
+    /*
+    |--------------------------------------------------------------------------
     | Rutas móviles
     |--------------------------------------------------------------------------
-    | Se dejan solo con api.token para no romper la app móvil.
     */
 
     Route::get('/paciente/{id}/videos', [MobileApiController::class, 'videosPaciente']);
     Route::get('/paciente/{id}/citas', [MobileApiController::class, 'citasPaciente']);
     Route::get('/pagos/{id}', [MobileApiController::class, 'pagosPaciente']);
+    Route::get('/paciente/{id}/notificaciones', [NotificacionApiController::class, 'paciente']);
 
     /*
     |--------------------------------------------------------------------------
     | Usuarios
     |--------------------------------------------------------------------------
-    | 1 = Administrador
     */
 
     Route::middleware('role:1')->group(function () {
@@ -63,9 +72,8 @@ Route::middleware('api.token')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
-    | Expedientes
+    | Expedientes, rutinas, citas y progreso
     |--------------------------------------------------------------------------
-    | 1 = Administrador, 2 = Fisioterapeuta
     */
 
     Route::middleware('role:1,2')->group(function () {

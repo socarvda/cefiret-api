@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\NotificacionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -118,6 +119,11 @@ class RutinaApiController extends Controller
             }
 
             DB::commit();
+
+            NotificacionService::crear(
+                (int) $request->id_paciente,
+                'Se te asignó una nueva rutina de ejercicios con fecha ' . $request->fecha_asignacion . '.'
+            );
 
             return response()->json([
                 'success' => true,
@@ -243,6 +249,19 @@ class RutinaApiController extends Controller
             }
 
             DB::commit();
+
+            $rutina = DB::table('rutina as r')
+                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
+                ->where('r.id_rutina', $id)
+                ->select('e.id_usuario')
+                ->first();
+
+            if ($rutina) {
+                NotificacionService::crear(
+                    (int) $rutina->id_usuario,
+                    'Tu rutina de ejercicios fue actualizada.'
+                );
+            }
 
             return response()->json([
                 'success' => true,
@@ -378,6 +397,11 @@ class RutinaApiController extends Controller
             }
 
             DB::commit();
+
+            NotificacionService::crear(
+                (int) $request->id_paciente,
+                'Se te asignó una rutina existente como nueva rutina de ejercicios.'
+            );
 
             return response()->json([
                 'success' => true,

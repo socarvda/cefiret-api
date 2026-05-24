@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Services\GoogleCalendarService;
+use App\Services\NotificacionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -167,10 +168,20 @@ class CitaApiController extends Controller
                 }
             }
 
+            NotificacionService::crear(
+                (int) $request->paciente_id,
+                'Tienes una nueva cita programada para el ' . $request->fecha . ' a las ' . substr($request->hora, 0, 5) . '.'
+            );
+
+            NotificacionService::crear(
+                (int) $request->fisioterapeuta_id,
+                'Tienes una nueva cita con ' . $paciente->nombre . ' ' . $paciente->apaterno . ' el ' . $request->fecha . ' a las ' . substr($request->hora, 0, 5) . '.'
+            );
+
             if ($googleConnected && !$googleEventId) {
                 return response()->json([
                     'success' => true,
-                    'message' => 'La cita se guardó en el sistema, pero no se pudo sincronizar con Google Calendar. Revisa los logs o vuelve a conectar Google Calendar.',
+                    'message' => 'La cita se guardó en el sistema, pero no se pudo sincronizar con Google Calendar.',
                     'id_cita' => $citaId,
                     'google_sync' => false
                 ], 201);
@@ -308,6 +319,16 @@ class CitaApiController extends Controller
                     ]);
             }
 
+            NotificacionService::crear(
+                (int) $request->paciente_id,
+                'Tu cita fue actualizada. Nueva fecha: ' . $request->fecha . ' a las ' . substr($request->hora, 0, 5) . '.'
+            );
+
+            NotificacionService::crear(
+                (int) $request->fisioterapeuta_id,
+                'Una cita fue actualizada con el paciente ' . $paciente->nombre . ' ' . $paciente->apaterno . '. Nueva fecha: ' . $request->fecha . ' a las ' . substr($request->hora, 0, 5) . '.'
+            );
+
             return response()->json([
                 'success' => true,
                 'message' => $googleConnected && $newGoogleEventId
@@ -378,6 +399,16 @@ class CitaApiController extends Controller
             if ($this->gcal->isAuthenticated() && $cita->google_event_id) {
                 $this->gcal->cancelEvent($cita->google_event_id);
             }
+
+            NotificacionService::crear(
+                (int) $cita->id_usuario,
+                'Tu cita del ' . $cita->fecha . ' a las ' . substr($cita->hora, 0, 5) . ' fue cancelada.'
+            );
+
+            NotificacionService::crear(
+                (int) $cita->id_fisioterapeuta,
+                'Se canceló una cita programada para el ' . $cita->fecha . ' a las ' . substr($cita->hora, 0, 5) . '.'
+            );
 
             return response()->json([
                 'success' => true,
