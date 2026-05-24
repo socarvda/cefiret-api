@@ -30,6 +30,17 @@ class RutinaApiController extends Controller
                 ->get();
 
             $pacientes = DB::table('usuario')
+                ->select(
+                    'id_usuario',
+                    'nombre',
+                    'apaterno',
+                    'amaterno',
+                    'correo',
+                    'telefono',
+                    'fecha_nac',
+                    'id_tipo_usuario',
+                    'activo'
+                )
                 ->where('id_tipo_usuario', 3)
                 ->orderBy('nombre')
                 ->get();
@@ -69,18 +80,15 @@ class RutinaApiController extends Controller
                 ->first();
 
             if (!$expediente) {
-                $expedienteId = DB::table('expediente')->insertGetId([
-                    'id_usuario' => $request->id_paciente,
-                    'fecha_creacion' => now()->format('Y-m-d'),
-                    'sexo' => 'No especificado',
-                    'edad' => 0,
-                    'edo_civil' => 'No especificado',
-                    'ocupacion' => 'No especificado',
-                    'alimentacion' => 'Regular'
-                ]);
-            } else {
-                $expedienteId = $expediente->id_expediente;
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El paciente debe tener expediente antes de asignarle una rutina.'
+                ], 409);
             }
+
+            $expedienteId = $expediente->id_expediente;
 
             $videoId = DB::table('video')->insertGetId([
                 'titulo' => $request->video_titulo,
@@ -198,6 +206,8 @@ class RutinaApiController extends Controller
                 ->first();
 
             if (!$detalle) {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
                     'message' => 'No existen detalles para esta rutina.'
@@ -289,10 +299,12 @@ class RutinaApiController extends Controller
                 ->first();
 
             if (!$expediente) {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'El paciente no tiene expediente.'
-                ], 404);
+                    'message' => 'El paciente debe tener expediente antes de asignarle una rutina.'
+                ], 409);
             }
 
             $original = DB::table('rutina')
@@ -300,6 +312,8 @@ class RutinaApiController extends Controller
                 ->first();
 
             if (!$original) {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
                     'message' => 'La rutina original no existe.'
@@ -311,6 +325,8 @@ class RutinaApiController extends Controller
                 ->first();
 
             if (!$detalle) {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
                     'message' => 'La rutina original no tiene detalles.'
@@ -322,6 +338,8 @@ class RutinaApiController extends Controller
                 ->first();
 
             if (!$video) {
+                DB::rollBack();
+
                 return response()->json([
                     'success' => false,
                     'message' => 'La rutina original no tiene video.'

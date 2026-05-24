@@ -35,8 +35,37 @@ class CitaApiController extends Controller
                 ->orderBy('cita.hora')
                 ->get();
 
-            $pacientes = DB::table('usuario')->where('id_tipo_usuario', 3)->orderBy('nombre')->get();
-            $fisios = DB::table('usuario')->where('id_tipo_usuario', 2)->orderBy('nombre')->get();
+            $pacientes = DB::table('usuario')
+                ->select(
+                    'id_usuario',
+                    'nombre',
+                    'apaterno',
+                    'amaterno',
+                    'correo',
+                    'telefono',
+                    'fecha_nac',
+                    'id_tipo_usuario',
+                    'activo'
+                )
+                ->where('id_tipo_usuario', 3)
+                ->orderBy('nombre')
+                ->get();
+
+            $fisios = DB::table('usuario')
+                ->select(
+                    'id_usuario',
+                    'nombre',
+                    'apaterno',
+                    'amaterno',
+                    'correo',
+                    'telefono',
+                    'fecha_nac',
+                    'id_tipo_usuario',
+                    'activo'
+                )
+                ->where('id_tipo_usuario', 2)
+                ->orderBy('nombre')
+                ->get();
 
             return response()->json([
                 'success' => true,
@@ -93,8 +122,13 @@ class CitaApiController extends Controller
                 }
             }
 
-            $paciente = DB::table('usuario')->where('id_usuario', $request->paciente_id)->first();
-            $fisio = DB::table('usuario')->where('id_usuario', $request->fisioterapeuta_id)->first();
+            $paciente = DB::table('usuario')
+                ->where('id_usuario', $request->paciente_id)
+                ->first();
+
+            $fisio = DB::table('usuario')
+                ->where('id_usuario', $request->fisioterapeuta_id)
+                ->first();
 
             if (!$paciente || !$fisio) {
                 return response()->json([
@@ -199,12 +233,29 @@ class CitaApiController extends Controller
                 ], 409);
             }
 
-            $citaActual = DB::table('cita')->where('id_cita', $id)->first();
+            $citaActual = DB::table('cita')
+                ->where('id_cita', $id)
+                ->first();
 
             if (!$citaActual) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Cita no encontrada.'
+                ], 404);
+            }
+
+            $paciente = DB::table('usuario')
+                ->where('id_usuario', $request->paciente_id)
+                ->first();
+
+            $fisio = DB::table('usuario')
+                ->where('id_usuario', $request->fisioterapeuta_id)
+                ->first();
+
+            if (!$paciente || !$fisio) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Paciente o fisioterapeuta no encontrado.'
                 ], 404);
             }
 
@@ -218,11 +269,10 @@ class CitaApiController extends Controller
                     'motivo' => $request->motivo,
                 ]);
 
-            if ($this->gcal->isAuthenticated() && $citaActual->google_event_id) {
-                $this->gcal->deleteEvent($citaActual->google_event_id);
-
-                $paciente = DB::table('usuario')->where('id_usuario', $request->paciente_id)->first();
-                $fisio = DB::table('usuario')->where('id_usuario', $request->fisioterapeuta_id)->first();
+            if ($this->gcal->isAuthenticated()) {
+                if ($citaActual->google_event_id) {
+                    $this->gcal->deleteEvent($citaActual->google_event_id);
+                }
 
                 $newGoogleEventId = $this->gcal->createEvent([
                     'id_cita' => $id,
@@ -235,7 +285,9 @@ class CitaApiController extends Controller
 
                 DB::table('cita')
                     ->where('id_cita', $id)
-                    ->update(['google_event_id' => $newGoogleEventId]);
+                    ->update([
+                        'google_event_id' => $newGoogleEventId
+                    ]);
             }
 
             return response()->json([
@@ -253,7 +305,9 @@ class CitaApiController extends Controller
     public function destroy($id)
     {
         try {
-            $cita = DB::table('cita')->where('id_cita', $id)->first();
+            $cita = DB::table('cita')
+                ->where('id_cita', $id)
+                ->first();
 
             if (!$cita) {
                 return response()->json([
@@ -266,7 +320,9 @@ class CitaApiController extends Controller
                 $this->gcal->deleteEvent($cita->google_event_id);
             }
 
-            DB::table('cita')->where('id_cita', $id)->delete();
+            DB::table('cita')
+                ->where('id_cita', $id)
+                ->delete();
 
             return response()->json([
                 'success' => true,
@@ -283,7 +339,9 @@ class CitaApiController extends Controller
     public function cancelar($id)
     {
         try {
-            $cita = DB::table('cita')->where('id_cita', $id)->first();
+            $cita = DB::table('cita')
+                ->where('id_cita', $id)
+                ->first();
 
             if (!$cita) {
                 return response()->json([

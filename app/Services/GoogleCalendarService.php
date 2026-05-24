@@ -133,7 +133,10 @@ class GoogleCalendarService
             $event = $this->service->events->get($this->calendarId, $googleEventId);
             $summary = $event->getSummary();
 
-            $event->setSummary('CANCELADA' . $summary);
+            if (!str_starts_with((string) $summary, 'CANCELADA - ')) {
+                $event->setSummary('CANCELADA - ' . $summary);
+            }
+
             $event->setColorId('4');
 
             $this->service->events->update($this->calendarId, $googleEventId, $event);

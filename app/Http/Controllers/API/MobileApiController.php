@@ -20,8 +20,7 @@ class MobileApiController extends Controller
                     'vp.fecha',
                     'v.titulo',
                     'v.descripcion',
-                    'v.url',
-                    'v.id_ejercicio'
+                    'v.url'
                 )
                 ->orderBy('vp.fecha', 'desc')
                 ->get();

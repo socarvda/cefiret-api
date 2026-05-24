@@ -12,33 +12,63 @@ use Illuminate\Support\Str;
 
 class UsuarioApiController extends Controller
 {
+    private function safeUserSelect()
+    {
+        return [
+            'id_usuario',
+            'nombre',
+            'apaterno',
+            'amaterno',
+            'correo',
+            'telefono',
+            'fecha_nac',
+            'id_tipo_usuario',
+            'activo'
+        ];
+    }
+
     public function index(Request $request)
     {
         $query = $request->get('query');
 
         $usuarios = DB::table('usuario')
+            ->select($this->safeUserSelect())
             ->when($query, function ($q) use ($query) {
-                $q->where('nombre', 'like', "%$query%")
-                  ->orWhere('apaterno', 'like', "%$query%")
-                  ->orWhere('amaterno', 'like', "%$query%")
-                  ->orWhere('correo', 'like', "%$query%")
-                  ->orWhere('telefono', 'like', "%$query%");
+                $q->where(function ($sub) use ($query) {
+                    $sub->where('nombre', 'like', "%$query%")
+                        ->orWhere('apaterno', 'like', "%$query%")
+                        ->orWhere('amaterno', 'like', "%$query%")
+                        ->orWhere('correo', 'like', "%$query%")
+                        ->orWhere('telefono', 'like', "%$query%");
+                });
             })
             ->orderBy('nombre')
             ->get();
 
-        return response()->json(['success' => true, 'usuarios' => $usuarios]);
+        return response()->json([
+            'success' => true,
+            'usuarios' => $usuarios
+        ]);
     }
 
     public function show($id)
     {
-        $usuario = DB::table('usuario')->where('id_usuario', $id)->first();
+        $usuario = DB::table('usuario')
+            ->select($this->safeUserSelect())
+            ->where('id_usuario', $id)
+            ->first();
 
         if (!$usuario) {
-            return response()->json(['success' => false, 'message' => 'Usuario no encontrado'], 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'Usuario no encontrado'
+            ], 404);
         }
 
-        return response()->json(['success' => true, 'usuario' => $usuario]);
+        return response()->json([
+            'success' => true,
+            'usuario' => $usuario
+        ]);
     }
 
     public function store(Request $request)
@@ -57,7 +87,7 @@ class UsuarioApiController extends Controller
         $tokenConfirmacion = null;
         $activo = 1;
 
-        if ((int)$request->id_tipo_usuario === 3) {
+        if ((int) $request->id_tipo_usuario === 3) {
             $activo = 0;
             $tokenConfirmacion = Str::uuid()->toString();
         }
@@ -75,8 +105,8 @@ class UsuarioApiController extends Controller
             'token_confirmacion' => $tokenConfirmacion,
         ]);
 
-        if ((int)$request->id_tipo_usuario === 3) {
-            $nombreCompleto = "$request->nombre $request->apaterno $request->amaterno";
+        if ((int) $request->id_tipo_usuario === 3) {
+            $nombreCompleto = trim($request->nombre . ' ' . $request->apaterno . ' ' . $request->amaterno);
             Mail::to($request->correo)->send(new ConfirmarCorreoMailable($nombreCompleto, $tokenConfirmacion));
         }
 
@@ -84,7 +114,7 @@ class UsuarioApiController extends Controller
             'success' => true,
             'message' => 'Usuario registrado exitosamente.',
             'id_usuario' => $id,
-            'requiere_expediente' => (int)$request->id_tipo_usuario === 3
+            'requiere_expediente' => (int) $request->id_tipo_usuario === 3
         ], 201);
     }
 
@@ -99,6 +129,15 @@ class UsuarioApiController extends Controller
             'fecha_nac' => 'required|date'
         ]);
 
+        $existe = DB::table('usuario')->where('id_usuario', $id)->exists();
+
+        if (!$existe) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Usuario no encontrado'
+            ], 404);
+        }
+
         DB::table('usuario')->where('id_usuario', $id)->update([
             'nombre' => $request->nombre,
             'apaterno' => $request->apaterno,
@@ -108,6 +147,9 @@ class UsuarioApiController extends Controller
             'fecha_nac' => $request->fecha_nac
         ]);
 
-        return response()->json(['success' => true, 'message' => 'Usuario actualizado exitosamente']);
+        return response()->json([
+            'success' => true,
+            'message' => 'Usuario actualizado exitosamente'
+        ]);
     }
 }

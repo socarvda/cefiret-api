@@ -8,10 +8,23 @@ use Illuminate\Support\Facades\DB;
 
 class ProgresoApiController extends Controller
 {
+    private array $safeUserColumns = [
+        'id_usuario',
+        'nombre',
+        'apaterno',
+        'amaterno',
+        'fecha_nac',
+        'telefono',
+        'correo',
+        'id_tipo_usuario',
+        'activo',
+    ];
+
     public function index()
     {
         try {
             $pacientes = DB::table('usuario')
+                ->select($this->safeUserColumns)
                 ->where('id_tipo_usuario', 3)
                 ->orderBy('nombre')
                 ->get();
@@ -32,7 +45,9 @@ class ProgresoApiController extends Controller
     {
         try {
             $paciente = DB::table('usuario')
+                ->select($this->safeUserColumns)
                 ->where('id_usuario', $idPaciente)
+                ->where('id_tipo_usuario', 3)
                 ->first();
 
             if (!$paciente) {
@@ -107,6 +122,7 @@ class ProgresoApiController extends Controller
 
             $idProgreso = DB::table('progreso')->insertGetId([
                 'id_rutina' => $request->id_rutina,
+                'id_ejercicio' => $request->id_ejercicio ?? null,
                 'fecha_realizacion' => now()->format('Y-m-d'),
                 'estado' => 'Registrado',
                 'comentarios' => $request->comentarios,
@@ -131,7 +147,9 @@ class ProgresoApiController extends Controller
     {
         try {
             $paciente = DB::table('usuario')
+                ->select($this->safeUserColumns)
                 ->where('id_usuario', $idPaciente)
+                ->where('id_tipo_usuario', 3)
                 ->first();
 
             if (!$paciente) {
