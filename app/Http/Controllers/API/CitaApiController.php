@@ -147,7 +147,10 @@ class CitaApiController extends Controller
                 'google_event_id' => null,
             ]);
 
-            if ($this->gcal->isAuthenticated()) {
+            $googleConnected = $this->gcal->isAuthenticated();
+            $googleEventId = null;
+
+            if ($googleConnected) {
                 $googleEventId = $this->gcal->createEvent([
                     'id_cita' => $citaId,
                     'paciente' => $paciente->nombre . ' ' . $paciente->apaterno,
@@ -164,11 +167,23 @@ class CitaApiController extends Controller
                 }
             }
 
+            if ($googleConnected && !$googleEventId) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'La cita se guardó en el sistema, pero no se pudo sincronizar con Google Calendar. Revisa los logs o vuelve a conectar Google Calendar.',
+                    'id_cita' => $citaId,
+                    'google_sync' => false
+                ], 201);
+            }
+
             return response()->json([
                 'success' => true,
-                'message' => 'Cita creada correctamente.',
+                'message' => $googleEventId
+                    ? 'Cita creada correctamente y sincronizada con Google Calendar.'
+                    : 'Cita creada correctamente.',
                 'id_cita' => $citaId,
-                'google_sync' => $this->gcal->isAuthenticated()
+                'google_event_id' => $googleEventId,
+                'google_sync' => (bool) $googleEventId
             ], 201);
         } catch (\Exception $e) {
             return response()->json([
@@ -269,7 +284,10 @@ class CitaApiController extends Controller
                     'motivo' => $request->motivo,
                 ]);
 
-            if ($this->gcal->isAuthenticated()) {
+            $googleConnected = $this->gcal->isAuthenticated();
+            $newGoogleEventId = $citaActual->google_event_id;
+
+            if ($googleConnected) {
                 if ($citaActual->google_event_id) {
                     $this->gcal->deleteEvent($citaActual->google_event_id);
                 }
@@ -292,7 +310,10 @@ class CitaApiController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Cita actualizada correctamente.'
+                'message' => $googleConnected && $newGoogleEventId
+                    ? 'Cita actualizada correctamente y sincronizada con Google Calendar.'
+                    : 'Cita actualizada correctamente.',
+                'google_sync' => (bool) $newGoogleEventId
             ]);
         } catch (\Exception $e) {
             return response()->json([

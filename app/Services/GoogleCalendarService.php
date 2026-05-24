@@ -77,21 +77,24 @@ class GoogleCalendarService
     public function createEvent(array $data): ?string
     {
         if (!$this->isAuthenticated()) {
+            Log::warning('GoogleCalendar createEvent: no autenticado');
             return null;
         }
 
         try {
-            $horaFin = date('H:i', strtotime($data['hora'] . ' +1 hour'));
             $timezone = env('APP_TIMEZONE', 'America/Mexico_City');
 
+            $horaInicio = substr($data['hora'], 0, 5);
+            $horaFin = date('H:i', strtotime($horaInicio . ' +1 hour'));
+
             $event = new Event([
-                'summary' => '🩺 Cita: ' . $data['paciente'],
+                'summary' => 'CEFIRET - Cita: ' . ($data['paciente'] ?? 'Paciente'),
                 'description' =>
-                    "Fisioterapeuta: {$data['fisioterapeuta']}\n" .
+                    "Fisioterapeuta: " . ($data['fisioterapeuta'] ?? 'No especificado') . "\n" .
                     "Motivo: " . ($data['motivo'] ?? 'Sin motivo') . "\n" .
                     "ID Cita: " . ($data['id_cita'] ?? ''),
                 'start' => new EventDateTime([
-                    'dateTime' => $data['fecha'] . 'T' . $data['hora'] . ':00',
+                    'dateTime' => $data['fecha'] . 'T' . $horaInicio . ':00',
                     'timeZone' => $timezone,
                 ]),
                 'end' => new EventDateTime([
@@ -103,9 +106,20 @@ class GoogleCalendarService
 
             $created = $this->service->events->insert($this->calendarId, $event);
 
+            Log::info('GoogleCalendar createEvent OK', [
+                'google_event_id' => $created->getId(),
+                'calendar_id' => $this->calendarId,
+                'fecha' => $data['fecha'] ?? null,
+                'hora' => $horaInicio,
+            ]);
+
             return $created->getId();
         } catch (\Exception $e) {
-            Log::error('GoogleCalendar createEvent: ' . $e->getMessage());
+            Log::error('GoogleCalendar createEvent ERROR: ' . $e->getMessage(), [
+                'calendar_id' => $this->calendarId,
+                'data' => $data,
+            ]);
+
             return null;
         }
     }
@@ -133,10 +147,7 @@ class GoogleCalendarService
             $event = $this->service->events->get($this->calendarId, $googleEventId);
             $summary = $event->getSummary();
 
-            if (!str_starts_with((string) $summary, 'CANCELADA - ')) {
-                $event->setSummary('CANCELADA - ' . $summary);
-            }
-
+            $event->setSummary('CANCELADA - ' . $summary);
             $event->setColorId('4');
 
             $this->service->events->update($this->calendarId, $googleEventId, $event);
@@ -212,6 +223,7 @@ class GoogleCalendarService
         }
 
         if (!$refreshToken) {
+            Log::warning('GoogleCalendar refreshToken: no existe refresh_token');
             return false;
         }
 
