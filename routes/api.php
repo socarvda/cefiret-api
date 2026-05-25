@@ -11,6 +11,7 @@ use App\Http\Controllers\API\ProgresoApiController;
 use App\Http\Controllers\API\ResetPasswordApiController;
 use App\Http\Controllers\API\MobileApiController;
 use App\Http\Controllers\API\NotificacionApiController;
+use App\Http\Controllers\API\PagoApiController;
 
 /*
 |--------------------------------------------------------------------------
@@ -62,6 +63,23 @@ Route::middleware('api.token')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
+    | Pagos para paciente
+    |--------------------------------------------------------------------------
+    */
+
+    Route::get('/paciente/{id}/pagos', [PagoApiController::class, 'paciente']);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Stripe Checkout
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/stripe/pagos/{idPago}/checkout', [PagoApiController::class, 'crearCheckout']);
+    Route::post('/stripe/confirmar', [PagoApiController::class, 'confirmarStripe']);
+
+    /*
+    |--------------------------------------------------------------------------
     | Administrador y fisioterapeuta
     |--------------------------------------------------------------------------
     | 1 = Administrador
@@ -109,8 +127,6 @@ Route::middleware('api.token')->group(function () {
         |--------------------------------------------------------------------------
         | Citas
         |--------------------------------------------------------------------------
-        | Importante: las rutas especiales van antes de /citas/{id}
-        |--------------------------------------------------------------------------
         */
 
         Route::get('/citas', [CitaApiController::class, 'index']);
@@ -130,5 +146,14 @@ Route::middleware('api.token')->group(function () {
 
         Route::get('/progreso', [ProgresoApiController::class, 'index']);
         Route::post('/progreso', [ProgresoApiController::class, 'store']);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Pagos administrativos
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get('/pagos-admin', [PagoApiController::class, 'index']);
+        Route::post('/pagos-admin', [PagoApiController::class, 'store']);
     });
 });
