@@ -12,6 +12,7 @@ use App\Http\Controllers\API\ResetPasswordApiController;
 use App\Http\Controllers\API\MobileApiController;
 use App\Http\Controllers\API\NotificacionApiController;
 use App\Http\Controllers\API\PagoApiController;
+use App\Http\Controllers\API\HistorialVisitaApiController;
 
 /*
 |--------------------------------------------------------------------------
@@ -51,6 +52,8 @@ Route::middleware('api.token')->group(function () {
     |--------------------------------------------------------------------------
     | Rutas para pacientes / app móvil
     |--------------------------------------------------------------------------
+    | Paciente: solo puede consultar su propio ID.
+    | Admin/fisio: pueden consultar cualquier paciente.
     */
 
     Route::get('/paciente/{id}/videos', [MobileApiController::class, 'videosPaciente']);
@@ -68,6 +71,16 @@ Route::middleware('api.token')->group(function () {
     */
 
     Route::get('/paciente/{id}/pagos', [PagoApiController::class, 'paciente']);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Historial de visitas
+    |--------------------------------------------------------------------------
+    | El paciente puede consultar su propio historial.
+    | Admin/fisio pueden consultar cualquier historial.
+    */
+
+    Route::get('/paciente/{id}/historial-visitas', [HistorialVisitaApiController::class, 'index']);
 
     /*
     |--------------------------------------------------------------------------
@@ -127,6 +140,8 @@ Route::middleware('api.token')->group(function () {
         |--------------------------------------------------------------------------
         | Citas
         |--------------------------------------------------------------------------
+        | Importante: las rutas especiales van antes de /citas/{id}
+        |--------------------------------------------------------------------------
         */
 
         Route::get('/citas', [CitaApiController::class, 'index']);
@@ -155,5 +170,13 @@ Route::middleware('api.token')->group(function () {
 
         Route::get('/pagos-admin', [PagoApiController::class, 'index']);
         Route::post('/pagos-admin', [PagoApiController::class, 'store']);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Historial de visitas administrativo
+        |--------------------------------------------------------------------------
+        */
+
+        Route::post('/paciente/{id}/historial-visitas', [HistorialVisitaApiController::class, 'store']);
     });
 });
