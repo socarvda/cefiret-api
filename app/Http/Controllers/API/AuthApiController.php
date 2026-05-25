@@ -10,24 +10,28 @@ use Illuminate\Support\Str;
 
 class AuthApiController extends Controller
 {
-    private const PASSWORD_REGEX = '/^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/';
-
-    private const PASSWORD_MESSAGE = 'La contraseña debe tener mínimo 8 caracteres, una letra mayúscula, un número y un carácter especial.';
-
     public function login(Request $request)
     {
+        /*
+         * Aceptamos ambos nombres para evitar problemas con el frontend:
+         * correo / email
+         * contrasena / password
+         */
+        $correo = $request->input('correo', $request->input('email'));
+        $contrasena = $request->input('contrasena', $request->input('password'));
+
+        $request->merge([
+            'correo' => $correo,
+            'contrasena' => $contrasena,
+        ]);
+
         $request->validate([
             'correo' => 'required|email',
-            'contrasena' => [
-                'required',
-                'string',
-                'regex:' . self::PASSWORD_REGEX,
-            ],
+            'contrasena' => 'required|string',
         ], [
             'correo.required' => 'El correo es obligatorio.',
             'correo.email' => 'Ingresa un correo válido.',
             'contrasena.required' => 'La contraseña es obligatoria.',
-            'contrasena.regex' => self::PASSWORD_MESSAGE,
         ]);
 
         try {
@@ -42,10 +46,14 @@ class AuthApiController extends Controller
                 ], 401);
             }
 
-            if (($usuario->activo ?? 1) != 1) {
+            /*
+             * Solo bloqueamos por correo no confirmado a pacientes.
+             * Admins y fisioterapeutas anteriores pueden seguir entrando.
+             */
+            if ((int) $usuario->id_tipo_usuario === 3 && (int) ($usuario->activo ?? 0) !== 1) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Usuario inactivo o correo no confirmado.'
+                    'message' => 'Aún no verificas tu correo.'
                 ], 403);
             }
 
@@ -57,8 +65,6 @@ class AuthApiController extends Controller
                     str_starts_with($contrasenaGuardada, '$2a$') ||
                     str_starts_with($contrasenaGuardada, '$2b$')
                 );
-
-            $passwordCorrecta = false;
 
             if ($estaHasheada) {
                 $passwordCorrecta = Hash::check($request->contrasena, $contrasenaGuardada);
@@ -79,6 +85,10 @@ class AuthApiController extends Controller
                 'api_token' => $token
             ];
 
+            /*
+             * Si era una contraseña vieja en texto plano, la convertimos a hash
+             * automáticamente después de iniciar sesión correctamente.
+             */
             if (!$estaHasheada) {
                 $updates['contrasena'] = Hash::make($request->contrasena);
             }
