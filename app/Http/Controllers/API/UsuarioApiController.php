@@ -18,7 +18,7 @@ class UsuarioApiController extends Controller
 
     private const PASSWORD_MESSAGE = 'La contraseña debe tener mínimo 8 caracteres, una letra mayúscula, un número y un carácter especial.';
 
-    private function safeUserSelect()
+    private function safeUserSelect(): array
     {
         return [
             'id_usuario',
@@ -31,6 +31,11 @@ class UsuarioApiController extends Controller
             'id_tipo_usuario',
             'activo'
         ];
+    }
+
+    private function enviarCorreosConfirmacion(): bool
+    {
+        return filter_var(env('SEND_CONFIRMATION_EMAILS', false), FILTER_VALIDATE_BOOLEAN);
     }
 
     public function index(Request $request)
@@ -126,8 +131,8 @@ class UsuarioApiController extends Controller
                 'token_confirmacion' => $tokenConfirmacion,
             ]);
 
-            $correoEnviado = false;
-            $intentarEnviarCorreo = filter_var(env('SEND_CONFIRMATION_EMAILS', false), FILTER_VALIDATE_BOOLEAN);
+            $correoIntentado = false;
+            $correoSeIntentaraDespues = false;
 
             if ($tipoUsuario === 3) {
                 NotificacionService::crear(
@@ -135,33 +140,54 @@ class UsuarioApiController extends Controller
                     'Tu cuenta fue registrada correctamente. Revisa tu correo para confirmar tu cuenta.'
                 );
 
-                if ($intentarEnviarCorreo) {
-                    try {
-                        $nombreCompleto = trim($request->nombre . ' ' . $request->apaterno . ' ' . $request->amaterno);
+                if ($this->enviarCorreosConfirmacion()) {
+                    $correoIntentado = true;
+                    $correoSeIntentaraDespues = true;
 
-                        Mail::to($request->correo)->send(
-                            new ConfirmarCorreoMailable($nombreCompleto, $tokenConfirmacion)
-                        );
+                    $correoDestino = $request->correo;
+                    $nombreCompleto = trim($request->nombre . ' ' . $request->apaterno . ' ' . $request->amaterno);
+                    $tokenParaCorreo = $tokenConfirmacion;
+                    $idUsuario = $id;
 
-                        $correoEnviado = true;
-                    } catch (\Exception $mailException) {
-                        Log::warning('No se pudo enviar correo de confirmación: ' . $mailException->getMessage(), [
-                            'id_usuario' => $id,
-                            'correo' => $request->correo,
-                        ]);
-                    }
+                    /*
+                     * Importante:
+                     * Esto evita que el frontend se quede atorado en "Registrando...".
+                     * Laravel responde primero al navegador y luego intenta mandar el correo.
+                     */
+                    app()->terminating(function () use ($correoDestino, $nombreCompleto, $tokenParaCorreo, $idUsuario) {
+                        try {
+                            Mail::to($correoDestino)->send(
+                                new ConfirmarCorreoMailable($nombreCompleto, $tokenParaCorreo)
+                            );
+
+                            Log::info('Correo de confirmación enviado correctamente.', [
+                                'id_usuario' => $idUsuario,
+                                'correo' => $correoDestino,
+                            ]);
+                        } catch (\Throwable $mailException) {
+                            Log::error('No se pudo enviar correo de confirmación: ' . $mailException->getMessage(), [
+                                'id_usuario' => $idUsuario,
+                                'correo' => $correoDestino,
+                            ]);
+                        }
+                    });
                 }
             }
 
             return response()->json([
                 'success' => true,
-                'message' => $this->mensajeRegistro($tipoUsuario, $correoEnviado, $intentarEnviarCorreo),
+                'message' => $this->mensajeRegistro($tipoUsuario, $correoIntentado),
                 'id_usuario' => $id,
                 'requiere_expediente' => $tipoUsuario === 3,
-                'correo_enviado' => $correoEnviado,
-                'envio_correo_activado' => (bool) $intentarEnviarCorreo
+                'correo_intentado' => $correoIntentado,
+                'correo_enviado' => false,
+                'correo_se_intentara_despues' => $correoSeIntentaraDespues
             ], 201);
         } catch (\Exception $e) {
+            Log::error('Error al registrar usuario: ' . $e->getMessage(), [
+                'correo' => $request->correo ?? null,
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al registrar usuario: ' . $e->getMessage()
@@ -169,21 +195,17 @@ class UsuarioApiController extends Controller
         }
     }
 
-    private function mensajeRegistro(int $tipoUsuario, bool $correoEnviado, bool $intentarEnviarCorreo): string
+    private function mensajeRegistro(int $tipoUsuario, bool $correoIntentado): string
     {
         if ($tipoUsuario !== 3) {
             return 'Usuario registrado exitosamente.';
         }
 
-        if (!$intentarEnviarCorreo) {
-            return 'Paciente registrado exitosamente. El envío de correo de confirmación está desactivado temporalmente.';
+        if ($correoIntentado) {
+            return 'Paciente registrado exitosamente. Se intentará enviar el correo de confirmación.';
         }
 
-        if ($correoEnviado) {
-            return 'Paciente registrado exitosamente. Se envió correo de confirmación.';
-        }
-
-        return 'Paciente registrado exitosamente, pero no se pudo enviar el correo de confirmación. Completa el expediente y revisa la configuración del correo.';
+        return 'Paciente registrado exitosamente. El envío de correo de confirmación está desactivado temporalmente.';
     }
 
     public function update(Request $request, $id)
@@ -254,6 +276,10 @@ class UsuarioApiController extends Controller
                 'message' => 'Usuario actualizado correctamente.'
             ]);
         } catch (\Exception $e) {
+            Log::error('Error al actualizar usuario: ' . $e->getMessage(), [
+                'id_usuario' => $id,
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al actualizar usuario: ' . $e->getMessage()
