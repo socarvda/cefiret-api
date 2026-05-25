@@ -9,6 +9,30 @@ use Illuminate\Support\Facades\DB;
 
 class ProgresoApiController extends Controller
 {
+    private function puedeConsultarPaciente(Request $request, int $idPaciente): bool
+    {
+        $usuario = $request->attributes->get('auth_user');
+
+        if (!$usuario) {
+            return false;
+        }
+
+        if (in_array((int) $usuario->id_tipo_usuario, [1, 2], true)) {
+            return true;
+        }
+
+        return (int) $usuario->id_tipo_usuario === 3 &&
+            (int) $usuario->id_usuario === (int) $idPaciente;
+    }
+
+    private function respuestaSinPermiso()
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'No tienes permisos para consultar el progreso de este paciente.'
+        ], 403);
+    }
+
     public function index()
     {
         try {
@@ -40,8 +64,12 @@ class ProgresoApiController extends Controller
         }
     }
 
-    public function show($idPaciente)
+    public function show(Request $request, $idPaciente)
     {
+        if (!$this->puedeConsultarPaciente($request, (int) $idPaciente)) {
+            return $this->respuestaSinPermiso();
+        }
+
         try {
             $paciente = DB::table('usuario')
                 ->select(
@@ -220,8 +248,12 @@ class ProgresoApiController extends Controller
         }
     }
 
-    public function report($idPaciente)
+    public function report(Request $request, $idPaciente)
     {
+        if (!$this->puedeConsultarPaciente($request, (int) $idPaciente)) {
+            return $this->respuestaSinPermiso();
+        }
+
         try {
             $paciente = DB::table('usuario')
                 ->select(

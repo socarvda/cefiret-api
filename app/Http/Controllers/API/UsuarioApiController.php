@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Mail\ConfirmarCorreoMailable;
+use App\Services\NotificacionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -136,27 +137,20 @@ class UsuarioApiController extends Controller
                     $correoEnviado = false;
 
                     Log::warning('No se pudo enviar correo de confirmación: ' . $mailException->getMessage(), [
-    'id_usuario' => $id,
-    'correo' => $request->correo,
-]);
+                        'id_usuario' => $id,
+                        'correo' => $request->correo,
+                    ]);
                 }
-            }
 
-            if ((int) $request->id_tipo_usuario === 3 && !$correoEnviado) {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Paciente registrado, pero no se pudo enviar el correo de confirmación. Revisa la configuración del correo.',
-                    'id_usuario' => $id,
-                    'requiere_expediente' => true,
-                    'correo_enviado' => false
-                ], 201);
+                NotificacionService::crear(
+                    (int) $id,
+                    'Tu cuenta fue registrada correctamente. Revisa tu correo para confirmar tu cuenta.'
+                );
             }
 
             return response()->json([
                 'success' => true,
-                'message' => (int) $request->id_tipo_usuario === 3
-                    ? 'Paciente registrado exitosamente. Debe confirmar su correo.'
-                    : 'Usuario registrado exitosamente.',
+                'message' => $this->mensajeRegistro((int) $request->id_tipo_usuario, $correoEnviado),
                 'id_usuario' => $id,
                 'requiere_expediente' => (int) $request->id_tipo_usuario === 3,
                 'correo_enviado' => $correoEnviado
@@ -167,6 +161,19 @@ class UsuarioApiController extends Controller
                 'message' => 'Error al registrar usuario: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    private function mensajeRegistro(int $tipoUsuario, bool $correoEnviado): string
+    {
+        if ($tipoUsuario !== 3) {
+            return 'Usuario registrado exitosamente.';
+        }
+
+        if ($correoEnviado) {
+            return 'Paciente registrado exitosamente. Se envió correo de confirmación.';
+        }
+
+        return 'Paciente registrado exitosamente, pero no se pudo enviar el correo de confirmación. Completa el expediente y revisa la configuración del correo.';
     }
 
     public function update(Request $request, $id)

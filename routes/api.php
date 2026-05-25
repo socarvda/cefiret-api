@@ -48,8 +48,10 @@ Route::middleware('api.token')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
-    | Rutas móviles
+    | Rutas para pacientes / app móvil
     |--------------------------------------------------------------------------
+    | Paciente: solo puede consultar su propio ID.
+    | Admin/fisio: pueden consultar cualquier paciente.
     */
 
     Route::get('/paciente/{id}/videos', [MobileApiController::class, 'videosPaciente']);
@@ -57,26 +59,24 @@ Route::middleware('api.token')->group(function () {
     Route::get('/pagos/{id}', [MobileApiController::class, 'pagosPaciente']);
     Route::get('/paciente/{id}/notificaciones', [NotificacionApiController::class, 'paciente']);
 
-    /*
-    |--------------------------------------------------------------------------
-    | Usuarios
-    |--------------------------------------------------------------------------
-    */
-
-    Route::middleware('role:1')->group(function () {
-        Route::get('/usuarios', [UsuarioApiController::class, 'index']);
-        Route::post('/usuarios', [UsuarioApiController::class, 'store']);
-        Route::get('/usuarios/{id}', [UsuarioApiController::class, 'show']);
-        Route::put('/usuarios/{id}', [UsuarioApiController::class, 'update']);
-    });
+    Route::get('/progreso/paciente/{id}', [ProgresoApiController::class, 'show']);
+    Route::get('/progreso/paciente/{id}/reporte', [ProgresoApiController::class, 'report']);
 
     /*
     |--------------------------------------------------------------------------
-    | Expedientes, rutinas, citas y progreso
+    | Administrador y fisioterapeuta
+    |--------------------------------------------------------------------------
+    | 1 = Administrador
+    | 2 = Fisioterapeuta
     |--------------------------------------------------------------------------
     */
 
     Route::middleware('role:1,2')->group(function () {
+        Route::get('/usuarios', [UsuarioApiController::class, 'index']);
+        Route::post('/usuarios', [UsuarioApiController::class, 'store']);
+        Route::get('/usuarios/{id}', [UsuarioApiController::class, 'show']);
+        Route::put('/usuarios/{id}', [UsuarioApiController::class, 'update']);
+
         Route::get('/expedientes/pacientes', [ExpedienteApiController::class, 'pacientes']);
         Route::get('/expedientes/pacientes/{id}', [ExpedienteApiController::class, 'show']);
         Route::post('/expedientes/pacientes/{id}', [ExpedienteApiController::class, 'store']);
@@ -99,7 +99,5 @@ Route::middleware('api.token')->group(function () {
 
         Route::get('/progreso', [ProgresoApiController::class, 'index']);
         Route::post('/progreso', [ProgresoApiController::class, 'store']);
-        Route::get('/progreso/paciente/{id}', [ProgresoApiController::class, 'show']);
-        Route::get('/progreso/paciente/{id}/reporte', [ProgresoApiController::class, 'report']);
     });
 });

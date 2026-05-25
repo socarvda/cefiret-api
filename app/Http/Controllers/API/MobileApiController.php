@@ -3,12 +3,41 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class MobileApiController extends Controller
 {
-    public function videosPaciente($id)
+    private function puedeConsultarPaciente(Request $request, int $idPaciente)
     {
+        $usuario = $request->attributes->get('auth_user');
+
+        if (!$usuario) {
+            return false;
+        }
+
+        if (in_array((int) $usuario->id_tipo_usuario, [1, 2], true)) {
+            return true;
+        }
+
+        return (int) $usuario->id_tipo_usuario === 3 &&
+            (int) $usuario->id_usuario === (int) $idPaciente;
+    }
+
+    private function respuestaSinPermiso()
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'No tienes permisos para consultar información de este paciente.'
+        ], 403);
+    }
+
+    public function videosPaciente(Request $request, $id)
+    {
+        if (!$this->puedeConsultarPaciente($request, (int) $id)) {
+            return $this->respuestaSinPermiso();
+        }
+
         try {
             $videos = DB::table('video_paciente as vp')
                 ->join('video as v', 'vp.id_video', '=', 'v.id_video')
@@ -37,8 +66,12 @@ class MobileApiController extends Controller
         }
     }
 
-    public function citasPaciente($id)
+    public function citasPaciente(Request $request, $id)
     {
+        if (!$this->puedeConsultarPaciente($request, (int) $id)) {
+            return $this->respuestaSinPermiso();
+        }
+
         try {
             $citas = DB::table('cita')
                 ->leftJoin('usuario as fisio', 'cita.id_fisioterapeuta', '=', 'fisio.id_usuario')
@@ -65,8 +98,12 @@ class MobileApiController extends Controller
         }
     }
 
-    public function pagosPaciente($id)
+    public function pagosPaciente(Request $request, $id)
     {
+        if (!$this->puedeConsultarPaciente($request, (int) $id)) {
+            return $this->respuestaSinPermiso();
+        }
+
         try {
             $pagos = DB::table('pago')
                 ->where('id_usuario', $id)

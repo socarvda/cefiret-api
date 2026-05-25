@@ -13,6 +13,10 @@ use Illuminate\Support\Str;
 
 class ResetPasswordApiController extends Controller
 {
+    private const PASSWORD_REGEX = '/^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/';
+
+    private const PASSWORD_MESSAGE = 'La contraseña debe tener mínimo 8 caracteres, una letra mayúscula, un número y un carácter especial.';
+
     public function sendResetLinkEmail(Request $request)
     {
         $request->validate([
@@ -67,9 +71,15 @@ class ResetPasswordApiController extends Controller
     public function resetPassword(Request $request)
     {
         $request->validate([
-            'contrasennia' => 'required|min:8',
+            'contrasennia' => [
+                'required',
+                'string',
+                'regex:' . self::PASSWORD_REGEX,
+            ],
             'recontrasennia' => 'required|same:contrasennia',
             'mytoken' => 'required'
+        ], [
+            'contrasennia.regex' => self::PASSWORD_MESSAGE,
         ]);
 
         try {
@@ -84,24 +94,25 @@ class ResetPasswordApiController extends Controller
                 ], 404);
             }
 
-            if ($user->token_expiracion && Carbon::parse($user->token_expiracion)->lessThan(Carbon::now())) {
+            if (!$user->token_expiracion || Carbon::parse($user->token_expiracion)->isPast()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'El enlace ha expirado.'
+                    'message' => 'El token ya expiró. Solicita uno nuevo.'
                 ], 410);
             }
 
             DB::table('usuario')
-                ->where('token_recuperacion', $request->mytoken)
+                ->where('id_usuario', $user->id_usuario)
                 ->update([
                     'contrasena' => Hash::make($request->contrasennia),
                     'token_recuperacion' => null,
                     'token_expiracion' => null,
+                    'api_token' => null,
                 ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Cambio de contraseña exitoso.'
+                'message' => 'Contraseña actualizada correctamente.'
             ]);
         } catch (\Exception $e) {
             return response()->json([
