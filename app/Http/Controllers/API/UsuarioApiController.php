@@ -127,7 +127,7 @@ class UsuarioApiController extends Controller
             ]);
 
             $correoEnviado = false;
-            $intentarEnviarCorreo = env('SEND_CONFIRMATION_EMAILS', false);
+            $intentarEnviarCorreo = filter_var(env('SEND_CONFIRMATION_EMAILS', false), FILTER_VALIDATE_BOOLEAN);
 
             if ($tipoUsuario === 3) {
                 NotificacionService::crear(
