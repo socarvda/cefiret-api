@@ -39,19 +39,31 @@ class MobileApiController extends Controller
         }
 
         try {
-            $videos = DB::table('video_paciente as vp')
-                ->join('video as v', 'vp.id_video', '=', 'v.id_video')
-                ->where('vp.id_usuario', $id)
+            /*
+             * Antes consultaba video_paciente, pero tus rutinas reales están en:
+             * rutina -> expediente -> usuario
+             * rutina -> rutinadetalles -> video
+             */
+            $videos = DB::table('rutina as r')
+                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
+                ->join('usuario as u', 'e.id_usuario', '=', 'u.id_usuario')
+                ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
+                ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
+                ->where('e.id_usuario', $id)
                 ->select(
-                    'vp.id_vp',
-                    'vp.id_usuario',
-                    'vp.id_video',
-                    'vp.fecha',
+                    'r.id_rutina',
+                    'e.id_usuario',
+                    'r.fecha_asignacion as fecha',
+                    'v.id_video',
                     'v.titulo',
                     'v.descripcion',
-                    'v.url'
+                    'v.url',
+                    'rd.repeticiones',
+                    'rd.series',
+                    'rd.tiempo',
+                    'rd.observaciones'
                 )
-                ->orderBy('vp.fecha', 'desc')
+                ->orderBy('r.fecha_asignacion', 'desc')
                 ->get();
 
             return response()->json([
@@ -61,7 +73,7 @@ class MobileApiController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error al cargar videos: ' . $e->getMessage()
+                'message' => 'Error al cargar rutinas del paciente: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -77,7 +89,12 @@ class MobileApiController extends Controller
                 ->leftJoin('usuario as fisio', 'cita.id_fisioterapeuta', '=', 'fisio.id_usuario')
                 ->where('cita.id_usuario', $id)
                 ->select(
-                    'cita.*',
+                    'cita.id_cita',
+                    'cita.fecha',
+                    'cita.hora',
+                    'cita.motivo',
+                    'cita.observaciones',
+                    'cita.estatus',
                     'fisio.nombre as fisio_nombre',
                     'fisio.apaterno as fisio_apaterno',
                     'fisio.amaterno as fisio_amaterno'
@@ -116,7 +133,16 @@ class MobileApiController extends Controller
                     'detalle'
                 )
                 ->orderBy('fecha_pago', 'desc')
-                ->get();
+                ->get()
+                ->map(function ($pago) {
+                    $detalle = (string) ($pago->detalle ?? '');
+
+                    preg_match('/Sesión Stripe:\s*(cs_[^\s|]+)/i', $detalle, $match);
+
+                    $pago->stripe_transaction_id = $match[1] ?? null;
+
+                    return $pago;
+                });
 
             return response()->json([
                 'success' => true,
