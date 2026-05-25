@@ -103,10 +103,12 @@ class UsuarioApiController extends Controller
         ]);
 
         try {
+            $tipoUsuario = (int) $request->id_tipo_usuario;
+
             $tokenConfirmacion = null;
             $activo = 1;
 
-            if ((int) $request->id_tipo_usuario === 3) {
+            if ($tipoUsuario === 3) {
                 $activo = 0;
                 $tokenConfirmacion = Str::uuid()->toString();
             }
@@ -119,41 +121,45 @@ class UsuarioApiController extends Controller
                 'contrasena' => Hash::make($request->contrasena),
                 'telefono' => $request->telefono,
                 'fecha_nac' => $request->fecha_nac,
-                'id_tipo_usuario' => $request->id_tipo_usuario,
+                'id_tipo_usuario' => $tipoUsuario,
                 'activo' => $activo,
                 'token_confirmacion' => $tokenConfirmacion,
             ]);
 
-            $correoEnviado = true;
+            $correoEnviado = false;
+            $intentarEnviarCorreo = env('SEND_CONFIRMATION_EMAILS', false);
 
-            if ((int) $request->id_tipo_usuario === 3) {
-                try {
-                    $nombreCompleto = trim($request->nombre . ' ' . $request->apaterno . ' ' . $request->amaterno);
-
-                    Mail::to($request->correo)->send(
-                        new ConfirmarCorreoMailable($nombreCompleto, $tokenConfirmacion)
-                    );
-                } catch (\Exception $mailException) {
-                    $correoEnviado = false;
-
-                    Log::warning('No se pudo enviar correo de confirmación: ' . $mailException->getMessage(), [
-                        'id_usuario' => $id,
-                        'correo' => $request->correo,
-                    ]);
-                }
-
+            if ($tipoUsuario === 3) {
                 NotificacionService::crear(
                     (int) $id,
                     'Tu cuenta fue registrada correctamente. Revisa tu correo para confirmar tu cuenta.'
                 );
+
+                if ($intentarEnviarCorreo) {
+                    try {
+                        $nombreCompleto = trim($request->nombre . ' ' . $request->apaterno . ' ' . $request->amaterno);
+
+                        Mail::to($request->correo)->send(
+                            new ConfirmarCorreoMailable($nombreCompleto, $tokenConfirmacion)
+                        );
+
+                        $correoEnviado = true;
+                    } catch (\Exception $mailException) {
+                        Log::warning('No se pudo enviar correo de confirmación: ' . $mailException->getMessage(), [
+                            'id_usuario' => $id,
+                            'correo' => $request->correo,
+                        ]);
+                    }
+                }
             }
 
             return response()->json([
                 'success' => true,
-                'message' => $this->mensajeRegistro((int) $request->id_tipo_usuario, $correoEnviado),
+                'message' => $this->mensajeRegistro($tipoUsuario, $correoEnviado, $intentarEnviarCorreo),
                 'id_usuario' => $id,
-                'requiere_expediente' => (int) $request->id_tipo_usuario === 3,
-                'correo_enviado' => $correoEnviado
+                'requiere_expediente' => $tipoUsuario === 3,
+                'correo_enviado' => $correoEnviado,
+                'envio_correo_activado' => (bool) $intentarEnviarCorreo
             ], 201);
         } catch (\Exception $e) {
             return response()->json([
@@ -163,10 +169,14 @@ class UsuarioApiController extends Controller
         }
     }
 
-    private function mensajeRegistro(int $tipoUsuario, bool $correoEnviado): string
+    private function mensajeRegistro(int $tipoUsuario, bool $correoEnviado, bool $intentarEnviarCorreo): string
     {
         if ($tipoUsuario !== 3) {
             return 'Usuario registrado exitosamente.';
+        }
+
+        if (!$intentarEnviarCorreo) {
+            return 'Paciente registrado exitosamente. El envío de correo de confirmación está desactivado temporalmente.';
         }
 
         if ($correoEnviado) {
