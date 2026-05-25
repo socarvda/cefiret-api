@@ -50,8 +50,6 @@ Route::middleware('api.token')->group(function () {
     |--------------------------------------------------------------------------
     | Rutas para pacientes / app móvil
     |--------------------------------------------------------------------------
-    | Paciente: solo puede consultar su propio ID.
-    | Admin/fisio: pueden consultar cualquier paciente.
     */
 
     Route::get('/paciente/{id}/videos', [MobileApiController::class, 'videosPaciente']);
@@ -72,21 +70,48 @@ Route::middleware('api.token')->group(function () {
     */
 
     Route::middleware('role:1,2')->group(function () {
+        /*
+        |--------------------------------------------------------------------------
+        | Usuarios
+        |--------------------------------------------------------------------------
+        */
+
         Route::get('/usuarios', [UsuarioApiController::class, 'index']);
         Route::post('/usuarios', [UsuarioApiController::class, 'store']);
         Route::get('/usuarios/{id}', [UsuarioApiController::class, 'show']);
         Route::put('/usuarios/{id}', [UsuarioApiController::class, 'update']);
 
+        /*
+        |--------------------------------------------------------------------------
+        | Expedientes
+        |--------------------------------------------------------------------------
+        */
+
         Route::get('/expedientes/pacientes', [ExpedienteApiController::class, 'pacientes']);
         Route::get('/expedientes/pacientes/{id}', [ExpedienteApiController::class, 'show']);
         Route::post('/expedientes/pacientes/{id}', [ExpedienteApiController::class, 'store']);
+        Route::put('/expedientes/pacientes/{id}', [ExpedienteApiController::class, 'update']);
         Route::get('/expedientes/pacientes/{id}/citas', [ExpedienteApiController::class, 'citas']);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Rutinas
+        |--------------------------------------------------------------------------
+        */
 
         Route::get('/rutinas', [RutinaApiController::class, 'index']);
         Route::post('/rutinas', [RutinaApiController::class, 'store']);
         Route::get('/rutinas/{id}', [RutinaApiController::class, 'show']);
         Route::put('/rutinas/{id}', [RutinaApiController::class, 'update']);
         Route::delete('/rutinas/{id}', [RutinaApiController::class, 'destroy']);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Citas
+        |--------------------------------------------------------------------------
+        | Importante: las rutas especiales van antes de /citas/{id}
+        |--------------------------------------------------------------------------
+        */
 
         Route::get('/citas', [CitaApiController::class, 'index']);
         Route::post('/citas', [CitaApiController::class, 'store']);
@@ -96,6 +121,12 @@ Route::middleware('api.token')->group(function () {
         Route::put('/citas/{id}', [CitaApiController::class, 'update']);
         Route::delete('/citas/{id}', [CitaApiController::class, 'destroy']);
         Route::post('/citas/{id}/cancelar', [CitaApiController::class, 'cancelar']);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Progreso
+        |--------------------------------------------------------------------------
+        */
 
         Route::get('/progreso', [ProgresoApiController::class, 'index']);
         Route::post('/progreso', [ProgresoApiController::class, 'store']);
