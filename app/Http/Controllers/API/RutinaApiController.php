@@ -282,12 +282,39 @@ class RutinaApiController extends Controller
         try {
             DB::beginTransaction();
 
+            $rutina = DB::table('rutina as r')
+                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
+                ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
+                ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
+                ->where('r.id_rutina', $id)
+                ->select(
+                    'r.id_rutina',
+                    'e.id_usuario',
+                    'v.titulo as video_titulo'
+                )
+                ->first();
+
+            if (!$rutina) {
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Rutina no encontrada.'
+                ], 404);
+            }
+
             DB::table('rutina_dias')->where('id_rutina', $id)->delete();
             DB::table('rutinadetalles')->where('id_rutina', $id)->delete();
             DB::table('progreso')->where('id_rutina', $id)->delete();
             DB::table('rutina')->where('id_rutina', $id)->delete();
 
             DB::commit();
+
+            NotificacionService::crear(
+                (int) $rutina->id_usuario,
+                'Una rutina de ejercicios fue retirada de tu expediente' .
+                (!empty($rutina->video_titulo) ? ': ' . $rutina->video_titulo . '.' : '.')
+            );
 
             return response()->json([
                 'success' => true,
@@ -299,121 +326,6 @@ class RutinaApiController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al eliminar la rutina: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    public function asignarExistente(Request $request)
-    {
-        $request->validate([
-            'id_paciente' => 'required|integer',
-            'rutina_existente' => 'required|integer'
-        ]);
-
-        try {
-            DB::beginTransaction();
-
-            $expediente = DB::table('expediente')
-                ->where('id_usuario', $request->id_paciente)
-                ->first();
-
-            if (!$expediente) {
-                DB::rollBack();
-
-                return response()->json([
-                    'success' => false,
-                    'message' => 'El paciente debe tener expediente antes de asignarle una rutina.'
-                ], 409);
-            }
-
-            $original = DB::table('rutina')
-                ->where('id_rutina', $request->rutina_existente)
-                ->first();
-
-            if (!$original) {
-                DB::rollBack();
-
-                return response()->json([
-                    'success' => false,
-                    'message' => 'La rutina original no existe.'
-                ], 404);
-            }
-
-            $detalle = DB::table('rutinadetalles')
-                ->where('id_rutina', $request->rutina_existente)
-                ->first();
-
-            if (!$detalle) {
-                DB::rollBack();
-
-                return response()->json([
-                    'success' => false,
-                    'message' => 'La rutina original no tiene detalles.'
-                ], 404);
-            }
-
-            $video = DB::table('video')
-                ->where('id_video', $detalle->id_video)
-                ->first();
-
-            if (!$video) {
-                DB::rollBack();
-
-                return response()->json([
-                    'success' => false,
-                    'message' => 'La rutina original no tiene video.'
-                ], 404);
-            }
-
-            $dias = DB::table('rutina_dias')
-                ->where('id_rutina', $request->rutina_existente)
-                ->pluck('dia');
-
-            $videoId = DB::table('video')->insertGetId([
-                'titulo' => $video->titulo,
-                'descripcion' => $video->descripcion,
-                'url' => $video->url
-            ]);
-
-            $newRutinaId = DB::table('rutina')->insertGetId([
-                'fecha_asignacion' => now()->format('Y-m-d'),
-                'id_expediente' => $expediente->id_expediente
-            ]);
-
-            DB::table('rutinadetalles')->insert([
-                'id_rutina' => $newRutinaId,
-                'id_video' => $videoId,
-                'repeticiones' => $detalle->repeticiones,
-                'series' => $detalle->series,
-                'tiempo' => $detalle->tiempo,
-                'observaciones' => $detalle->observaciones
-            ]);
-
-            foreach ($dias as $dia) {
-                DB::table('rutina_dias')->insert([
-                    'id_rutina' => $newRutinaId,
-                    'dia' => $dia
-                ]);
-            }
-
-            DB::commit();
-
-            NotificacionService::crear(
-                (int) $request->id_paciente,
-                'Se te asignó una rutina existente como nueva rutina de ejercicios.'
-            );
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Rutina asignada correctamente.',
-                'id_rutina' => $newRutinaId
-            ], 201);
-        } catch (\Exception $e) {
-            DB::rollBack();
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Error al asignar rutina: ' . $e->getMessage()
             ], 500);
         }
     }

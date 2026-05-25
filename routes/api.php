@@ -84,7 +84,6 @@ Route::middleware('api.token')->group(function () {
 
         Route::get('/rutinas', [RutinaApiController::class, 'index']);
         Route::post('/rutinas', [RutinaApiController::class, 'store']);
-        Route::post('/rutinas/asignar-existente', [RutinaApiController::class, 'asignarExistente']);
         Route::get('/rutinas/{id}', [RutinaApiController::class, 'show']);
         Route::put('/rutinas/{id}', [RutinaApiController::class, 'update']);
         Route::delete('/rutinas/{id}', [RutinaApiController::class, 'destroy']);
