@@ -33,6 +33,53 @@ class ProgresoApiController extends Controller
         ], 403);
     }
 
+    private function usuarioAutenticado(Request $request)
+    {
+        return $request->attributes->get('auth_user');
+    }
+
+    private function esAdminOFisio($usuario): bool
+    {
+        return in_array((int) ($usuario->id_tipo_usuario ?? 0), [1, 2], true);
+    }
+
+    private function esPaciente($usuario): bool
+    {
+        return (int) ($usuario->id_tipo_usuario ?? 0) === 3;
+    }
+
+    private function obtenerRutinaConPaciente($idRutina)
+    {
+        return DB::table('rutina as r')
+            ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
+            ->join('usuario as u', 'e.id_usuario', '=', 'u.id_usuario')
+            ->where('r.id_rutina', $idRutina)
+            ->select(
+                'r.id_rutina',
+                'r.fecha_asignacion',
+                'r.id_expediente',
+                'e.id_usuario as id_paciente',
+                'u.nombre',
+                'u.apaterno',
+                'u.amaterno',
+                'u.correo'
+            )
+            ->first();
+    }
+
+    private function resolverIdEjercicio($idEjercicio)
+    {
+        if (!$idEjercicio) {
+            return null;
+        }
+
+        $existe = DB::table('ejercicio')
+            ->where('id_ejercicio', $idEjercicio)
+            ->exists();
+
+        return $existe ? (int) $idEjercicio : null;
+    }
+
     public function index()
     {
         try {
@@ -115,14 +162,23 @@ class ProgresoApiController extends Controller
                 ->join('rutina as r', 'p.id_rutina', '=', 'r.id_rutina')
                 ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
                 ->where('e.id_usuario', $idPaciente)
-                ->select('p.*', 'r.fecha_asignacion')
+                ->select(
+                    'p.id_progreso',
+                    'p.id_rutina',
+                    'p.id_ejercicio',
+                    'p.fecha_realizacion',
+                    'p.estado',
+                    'p.comentarios',
+                    'p.evidencia',
+                    'p.porcentaje',
+                    'p.desbloqueado',
+                    'r.fecha_asignacion'
+                )
                 ->orderBy('p.fecha_realizacion', 'desc')
                 ->orderBy('p.id_progreso', 'desc')
                 ->get();
 
             $ultimoProgreso = $progresos->first();
-
-            $averageProgress = $progresos->avg('porcentaje') ?? 0;
 
             return response()->json([
                 'success' => true,
@@ -130,7 +186,8 @@ class ProgresoApiController extends Controller
                 'rutina' => $rutina,
                 'progresos' => $progresos,
                 'ultimoProgreso' => $ultimoProgreso,
-                'averageProgress' => $averageProgress
+                'averageProgress' => $progresos->avg('porcentaje') ?? 0,
+                'totalRecords' => $progresos->count()
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -142,16 +199,33 @@ class ProgresoApiController extends Controller
 
     public function store(Request $request)
     {
+        $usuarioAuth = $this->usuarioAutenticado($request);
+
+        if (!$usuarioAuth) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No autenticado.'
+            ], 401);
+        }
+
         $request->validate([
             'id_rutina' => 'required|integer',
+            'id_ejercicio' => 'nullable|integer',
             'porcentaje' => 'required|numeric|min:0|max:100',
-            'comentarios' => 'nullable|string|max:1000'
+            'estado' => 'nullable|string|max:50',
+            'comentarios' => 'nullable|string|max:1000',
+            'comentario' => 'nullable|string|max:1000',
+            'observaciones' => 'nullable|string|max:1000',
+            'evidencia' => 'nullable|string|max:1000'
+        ], [
+            'id_rutina.required' => 'La rutina es obligatoria.',
+            'porcentaje.required' => 'El porcentaje es obligatorio.',
+            'porcentaje.min' => 'El porcentaje no puede ser menor a 0.',
+            'porcentaje.max' => 'El porcentaje no puede ser mayor a 100.'
         ]);
 
         try {
-            $rutina = DB::table('rutina')
-                ->where('id_rutina', $request->id_rutina)
-                ->first();
+            $rutina = $this->obtenerRutinaConPaciente($request->id_rutina);
 
             if (!$rutina) {
                 return response()->json([
@@ -160,9 +234,31 @@ class ProgresoApiController extends Controller
                 ], 404);
             }
 
-            $nuevoPorcentaje = (float) $request->porcentaje;
-            $fechaHoy = now()->format('Y-m-d');
+            /*
+             * Admin/fisio pueden registrar progreso de cualquier paciente.
+             * Paciente solo puede registrar progreso de sus propias rutinas.
+             */
+            if ($this->esPaciente($usuarioAuth)) {
+                if ((int) $usuarioAuth->id_usuario !== (int) $rutina->id_paciente) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'No puedes registrar progreso de otra persona.'
+                    ], 403);
+                }
+            } elseif (!$this->esAdminOFisio($usuarioAuth)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No tienes permiso para registrar progreso.'
+                ], 403);
+            }
 
+            $nuevoPorcentaje = (int) $request->porcentaje;
+
+            /*
+             * Se valida contra el último progreso de la rutina completa.
+             * Así se conserva la regla que ya tenías:
+             * el nuevo porcentaje debe ser mayor al anterior.
+             */
             $ultimoProgreso = DB::table('progreso')
                 ->where('id_rutina', $request->id_rutina)
                 ->orderBy('fecha_realizacion', 'desc')
@@ -170,7 +266,7 @@ class ProgresoApiController extends Controller
                 ->first();
 
             if ($ultimoProgreso) {
-                $ultimoPorcentaje = (float) $ultimoProgreso->porcentaje;
+                $ultimoPorcentaje = (int) $ultimoProgreso->porcentaje;
 
                 if ($ultimoPorcentaje >= 100) {
                     return response()->json([
@@ -187,59 +283,57 @@ class ProgresoApiController extends Controller
                 }
             }
 
-            $progresoHoy = DB::table('progreso')
-                ->where('id_rutina', $request->id_rutina)
-                ->where('fecha_realizacion', $fechaHoy)
-                ->orderBy('id_progreso', 'desc')
-                ->first();
+            $comentarios = $request->comentarios
+                ?? $request->comentario
+                ?? $request->observaciones
+                ?? null;
 
-            if ($progresoHoy) {
-                DB::table('progreso')
-                    ->where('id_progreso', $progresoHoy->id_progreso)
-                    ->update([
-                        'estado' => $nuevoPorcentaje >= 100 ? 'Completado' : 'Registrado',
-                        'comentarios' => $request->comentarios,
-                        'porcentaje' => $nuevoPorcentaje,
-                        'desbloqueado' => $nuevoPorcentaje >= 100 ? 1 : 0
-                    ]);
+            $idEjercicio = $this->resolverIdEjercicio($request->id_ejercicio);
 
-                $idProgreso = $progresoHoy->id_progreso;
-                $accion = 'actualizado';
-            } else {
-                $idProgreso = DB::table('progreso')->insertGetId([
-                    'id_rutina' => $request->id_rutina,
-                    'fecha_realizacion' => $fechaHoy,
-                    'estado' => $nuevoPorcentaje >= 100 ? 'Completado' : 'Registrado',
-                    'comentarios' => $request->comentarios,
-                    'porcentaje' => $nuevoPorcentaje,
-                    'desbloqueado' => $nuevoPorcentaje >= 100 ? 1 : 0
-                ]);
+            $estado = $request->estado;
 
-                $accion = 'registrado';
+            if (!$estado) {
+                $estado = $nuevoPorcentaje >= 100 ? 'Completado' : 'Registrado';
             }
 
-            $paciente = DB::table('rutina as r')
-                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
-                ->join('usuario as u', 'e.id_usuario', '=', 'u.id_usuario')
-                ->where('r.id_rutina', $request->id_rutina)
-                ->select('u.id_usuario', 'u.nombre', 'u.apaterno')
-                ->first();
+            /*
+             * IMPORTANTE:
+             * Aquí siempre insertamos un nuevo registro.
+             * Ya no actualizamos el progreso del mismo día.
+             */
+            $idProgreso = DB::table('progreso')->insertGetId([
+                'id_rutina' => (int) $request->id_rutina,
+                'id_ejercicio' => $idEjercicio,
+                'fecha_realizacion' => now()->format('Y-m-d'),
+                'estado' => $estado,
+                'comentarios' => $comentarios,
+                'evidencia' => $request->evidencia,
+                'porcentaje' => $nuevoPorcentaje,
+                'desbloqueado' => $nuevoPorcentaje >= 100 ? 1 : 0
+            ]);
 
-            if ($paciente) {
-                NotificacionService::crear(
-                    (int) $paciente->id_usuario,
-                    'Se ' . $accion . ' un avance de ' . $nuevoPorcentaje . '% en tu rutina.'
-                );
-            }
+            NotificacionService::crear(
+                (int) $rutina->id_paciente,
+                'Se registró un avance de ' . $nuevoPorcentaje . '% en tu rutina.'
+            );
 
             return response()->json([
                 'success' => true,
-                'message' => $accion === 'actualizado'
-                    ? 'Progreso de hoy actualizado correctamente.'
-                    : 'Progreso registrado correctamente.',
+                'message' => 'Progreso registrado correctamente.',
                 'id_progreso' => $idProgreso,
-                'accion' => $accion
-            ], $accion === 'actualizado' ? 200 : 201);
+                'accion' => 'registrado',
+                'progreso' => [
+                    'id_progreso' => $idProgreso,
+                    'id_rutina' => (int) $request->id_rutina,
+                    'id_ejercicio' => $idEjercicio,
+                    'fecha_realizacion' => now()->format('Y-m-d'),
+                    'estado' => $estado,
+                    'comentarios' => $comentarios,
+                    'evidencia' => $request->evidencia,
+                    'porcentaje' => $nuevoPorcentaje,
+                    'desbloqueado' => $nuevoPorcentaje >= 100 ? 1 : 0
+                ]
+            ], 201);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -284,7 +378,15 @@ class ProgresoApiController extends Controller
                 ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
                 ->where('e.id_usuario', $idPaciente)
                 ->select(
-                    'p.*',
+                    'p.id_progreso',
+                    'p.id_rutina',
+                    'p.id_ejercicio',
+                    'p.fecha_realizacion',
+                    'p.estado',
+                    'p.comentarios',
+                    'p.evidencia',
+                    'p.porcentaje',
+                    'p.desbloqueado',
                     'r.fecha_asignacion',
                     'v.titulo as video_titulo',
                     'rd.repeticiones',
