@@ -32,28 +32,6 @@ class MobileApiController extends Controller
         ], 403);
     }
 
-    private function limpiarDetallePago($detalle)
-    {
-        $detalle = (string) ($detalle ?? '');
-
-        $detalle = preg_replace('/\s*\|\s*Sesión Stripe:\s*cs_[^\s|]+/i', '', $detalle);
-        $detalle = preg_replace('/Sesión Stripe:\s*cs_[^\s|]+/i', '', $detalle);
-        $detalle = preg_replace('/\s*\|\s*Pagado Stripe/i', '', $detalle);
-        $detalle = preg_replace('/Pagado Stripe\s*\|\s*/i', '', $detalle);
-        $detalle = preg_replace('/Pendiente Stripe\s*\|\s*/i', '', $detalle);
-
-        return trim($detalle);
-    }
-
-    private function extraerStripeTransactionId($detalle)
-    {
-        $detalle = (string) ($detalle ?? '');
-
-        preg_match('/Sesión Stripe:\s*(cs_[^\s|]+)/i', $detalle, $match);
-
-        return $match[1] ?? null;
-    }
-
     public function videosPaciente(Request $request, $id)
     {
         if (!$this->puedeConsultarPaciente($request, (int) $id)) {
@@ -61,10 +39,6 @@ class MobileApiController extends Controller
         }
 
         try {
-            /*
-             * Este método queda como lo usaba la app móvil originalmente:
-             * video_paciente -> video
-             */
             $videos = DB::table('video_paciente as vp')
                 ->join('video as v', 'vp.id_video', '=', 'v.id_video')
                 ->where('vp.id_usuario', $id)
@@ -142,20 +116,7 @@ class MobileApiController extends Controller
                     'detalle'
                 )
                 ->orderBy('fecha_pago', 'desc')
-                ->get()
-                ->map(function ($pago) {
-                    $stripeTransactionId = $this->extraerStripeTransactionId($pago->detalle);
-
-                    $pago->stripe_transaction_id = $stripeTransactionId;
-                    $pago->detalle_limpio = $this->limpiarDetallePago($pago->detalle);
-
-                    $pago->estado_pago = $stripeTransactionId ||
-                        strtolower((string) $pago->metodo_pago) === 'stripe'
-                            ? 'Pagado'
-                            : 'Pendiente';
-
-                    return $pago;
-                });
+                ->get();
 
             return response()->json([
                 'success' => true,
