@@ -32,6 +32,28 @@ class MobileApiController extends Controller
         ], 403);
     }
 
+    private function limpiarDetallePago($detalle)
+    {
+        $detalle = (string) ($detalle ?? '');
+
+        $detalle = preg_replace('/\s*\|\s*Sesión Stripe:\s*cs_[^\s|]+/i', '', $detalle);
+        $detalle = preg_replace('/Sesión Stripe:\s*cs_[^\s|]+/i', '', $detalle);
+        $detalle = preg_replace('/\s*\|\s*Pagado Stripe/i', '', $detalle);
+        $detalle = preg_replace('/Pagado Stripe\s*\|\s*/i', '', $detalle);
+        $detalle = preg_replace('/Pendiente Stripe\s*\|\s*/i', '', $detalle);
+
+        return trim($detalle);
+    }
+
+    private function extraerStripeTransactionId($detalle)
+    {
+        $detalle = (string) ($detalle ?? '');
+
+        preg_match('/Sesión Stripe:\s*(cs_[^\s|]+)/i', $detalle, $match);
+
+        return $match[1] ?? null;
+    }
+
     public function videosPaciente(Request $request, $id)
     {
         if (!$this->puedeConsultarPaciente($request, (int) $id)) {
@@ -40,30 +62,22 @@ class MobileApiController extends Controller
 
         try {
             /*
-             * Antes consultaba video_paciente, pero tus rutinas reales están en:
-             * rutina -> expediente -> usuario
-             * rutina -> rutinadetalles -> video
+             * Este método queda como lo usaba la app móvil originalmente:
+             * video_paciente -> video
              */
-            $videos = DB::table('rutina as r')
-                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
-                ->join('usuario as u', 'e.id_usuario', '=', 'u.id_usuario')
-                ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
-                ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
-                ->where('e.id_usuario', $id)
+            $videos = DB::table('video_paciente as vp')
+                ->join('video as v', 'vp.id_video', '=', 'v.id_video')
+                ->where('vp.id_usuario', $id)
                 ->select(
-                    'r.id_rutina',
-                    'e.id_usuario',
-                    'r.fecha_asignacion as fecha',
-                    'v.id_video',
+                    'vp.id_vp',
+                    'vp.id_usuario',
+                    'vp.id_video',
+                    'vp.fecha',
                     'v.titulo',
                     'v.descripcion',
-                    'v.url',
-                    'rd.repeticiones',
-                    'rd.series',
-                    'rd.tiempo',
-                    'rd.observaciones'
+                    'v.url'
                 )
-                ->orderBy('r.fecha_asignacion', 'desc')
+                ->orderBy('vp.fecha', 'desc')
                 ->get();
 
             return response()->json([
@@ -73,7 +87,7 @@ class MobileApiController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error al cargar rutinas del paciente: ' . $e->getMessage()
+                'message' => 'Error al cargar videos: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -89,12 +103,7 @@ class MobileApiController extends Controller
                 ->leftJoin('usuario as fisio', 'cita.id_fisioterapeuta', '=', 'fisio.id_usuario')
                 ->where('cita.id_usuario', $id)
                 ->select(
-                    'cita.id_cita',
-                    'cita.fecha',
-                    'cita.hora',
-                    'cita.motivo',
-                    'cita.observaciones',
-                    'cita.estatus',
+                    'cita.*',
                     'fisio.nombre as fisio_nombre',
                     'fisio.apaterno as fisio_apaterno',
                     'fisio.amaterno as fisio_amaterno'
@@ -135,22 +144,15 @@ class MobileApiController extends Controller
                 ->orderBy('fecha_pago', 'desc')
                 ->get()
                 ->map(function ($pago) {
-                    $detalle = (string) ($pago->detalle ?? '');
+                    $stripeTransactionId = $this->extraerStripeTransactionId($pago->detalle);
 
-                    preg_match('/Sesión Stripe:\s*(cs_[^\s|]+)/i', $detalle, $match);
+                    $pago->stripe_transaction_id = $stripeTransactionId;
+                    $pago->detalle_limpio = $this->limpiarDetallePago($pago->detalle);
 
-                    $pago->stripe_transaction_id = $match[1] ?? null;
-
-                    $detalleLimpio = preg_replace('/\s*\|\s*Sesión Stripe:\s*cs_[^\s|]+/i', '', $detalle);
-                    $detalleLimpio = preg_replace('/Sesión Stripe:\s*cs_[^\s|]+/i', '', $detalleLimpio);
-                    $detalleLimpio = preg_replace('/\s*\|\s*Pagado Stripe/i', '', $detalleLimpio);
-                    $detalleLimpio = preg_replace('/Pagado Stripe\s*\|\s*/i', '', $detalleLimpio);
-                    $detalleLimpio = preg_replace('/Pendiente Stripe\s*\|\s*/i', '', $detalleLimpio);
-
-                    $pago->detalle_limpio = trim($detalleLimpio);
-                    $pago->estado_pago = $pago->stripe_transaction_id || strtolower((string) $pago->metodo_pago) === 'stripe'
-                        ? 'Pagado'
-                        : 'Pendiente';
+                    $pago->estado_pago = $stripeTransactionId ||
+                        strtolower((string) $pago->metodo_pago) === 'stripe'
+                            ? 'Pagado'
+                            : 'Pendiente';
 
                     return $pago;
                 });
