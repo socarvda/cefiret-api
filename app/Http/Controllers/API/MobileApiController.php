@@ -141,6 +141,17 @@ class MobileApiController extends Controller
 
                     $pago->stripe_transaction_id = $match[1] ?? null;
 
+                    $detalleLimpio = preg_replace('/\s*\|\s*Sesión Stripe:\s*cs_[^\s|]+/i', '', $detalle);
+                    $detalleLimpio = preg_replace('/Sesión Stripe:\s*cs_[^\s|]+/i', '', $detalleLimpio);
+                    $detalleLimpio = preg_replace('/\s*\|\s*Pagado Stripe/i', '', $detalleLimpio);
+                    $detalleLimpio = preg_replace('/Pagado Stripe\s*\|\s*/i', '', $detalleLimpio);
+                    $detalleLimpio = preg_replace('/Pendiente Stripe\s*\|\s*/i', '', $detalleLimpio);
+
+                    $pago->detalle_limpio = trim($detalleLimpio);
+                    $pago->estado_pago = $pago->stripe_transaction_id || strtolower((string) $pago->metodo_pago) === 'stripe'
+                        ? 'Pagado'
+                        : 'Pendiente';
+
                     return $pago;
                 });
 
