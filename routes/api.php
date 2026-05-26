@@ -50,19 +50,37 @@ Route::middleware('api.token')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
-    | Rutas para pacientes / app móvil
+    | Rutas para pacientes / app móvil / vistas de paciente
     |--------------------------------------------------------------------------
     | Paciente: solo puede consultar su propio ID.
     | Admin/fisio: pueden consultar cualquier paciente.
+    |
+    | IMPORTANTE:
+    | /paciente/{id}/videos  = app móvil, se deja como estaba.
+    | /paciente/{id}/rutinas = sistema web, expediente y vista Mis rutinas.
+    |--------------------------------------------------------------------------
     */
 
     Route::get('/paciente/{id}/videos', [MobileApiController::class, 'videosPaciente']);
+    Route::get('/paciente/{id}/rutinas', [MobileApiController::class, 'rutinasPaciente']);
     Route::get('/paciente/{id}/citas', [MobileApiController::class, 'citasPaciente']);
     Route::get('/pagos/{id}', [MobileApiController::class, 'pagosPaciente']);
     Route::get('/paciente/{id}/notificaciones', [NotificacionApiController::class, 'paciente']);
 
     Route::get('/progreso/paciente/{id}', [ProgresoApiController::class, 'show']);
     Route::get('/progreso/paciente/{id}/reporte', [ProgresoApiController::class, 'report']);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Progreso desde app móvil y sistema web
+    |--------------------------------------------------------------------------
+    | Este POST debe estar fuera de role:1,2 porque la app es para pacientes.
+    | El controlador se encarga de validar que el paciente solo registre
+    | progreso de sus propias rutinas.
+    |--------------------------------------------------------------------------
+    */
+
+    Route::post('/progreso', [ProgresoApiController::class, 'store']);
 
     /*
     |--------------------------------------------------------------------------
@@ -78,6 +96,7 @@ Route::middleware('api.token')->group(function () {
     |--------------------------------------------------------------------------
     | El paciente puede consultar su propio historial.
     | Admin/fisio pueden consultar cualquier historial.
+    |--------------------------------------------------------------------------
     */
 
     Route::get('/paciente/{id}/historial-visitas', [HistorialVisitaApiController::class, 'index']);
@@ -157,10 +176,12 @@ Route::middleware('api.token')->group(function () {
         |--------------------------------------------------------------------------
         | Progreso
         |--------------------------------------------------------------------------
+        | GET queda solo para admin/fisio.
+        | POST /progreso está arriba para que también funcione la app del paciente.
+        |--------------------------------------------------------------------------
         */
 
         Route::get('/progreso', [ProgresoApiController::class, 'index']);
-        Route::post('/progreso', [ProgresoApiController::class, 'store']);
 
         /*
         |--------------------------------------------------------------------------

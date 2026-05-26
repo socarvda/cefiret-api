@@ -39,6 +39,10 @@ class MobileApiController extends Controller
         }
 
         try {
+            /*
+             * Esta ruta se deja como la usa la app móvil:
+             * video_paciente -> video
+             */
             $videos = DB::table('video_paciente as vp')
                 ->join('video as v', 'vp.id_video', '=', 'v.id_video')
                 ->where('vp.id_usuario', $id)
@@ -62,6 +66,50 @@ class MobileApiController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al cargar videos: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function rutinasPaciente(Request $request, $id)
+    {
+        if (!$this->puedeConsultarPaciente($request, (int) $id)) {
+            return $this->respuestaSinPermiso();
+        }
+
+        try {
+            /*
+             * Esta ruta es para el sistema web:
+             * paciente/rutinas.html y expediente/ver.html
+             */
+            $rutinas = DB::table('rutina as r')
+                ->join('expediente as e', 'r.id_expediente', '=', 'e.id_expediente')
+                ->leftJoin('rutinadetalles as rd', 'r.id_rutina', '=', 'rd.id_rutina')
+                ->leftJoin('video as v', 'rd.id_video', '=', 'v.id_video')
+                ->where('e.id_usuario', $id)
+                ->select(
+                    'r.id_rutina',
+                    'e.id_usuario',
+                    'r.fecha_asignacion as fecha',
+                    'v.id_video',
+                    'v.titulo',
+                    'v.descripcion',
+                    'v.url',
+                    'rd.repeticiones',
+                    'rd.series',
+                    'rd.tiempo',
+                    'rd.observaciones'
+                )
+                ->orderBy('r.fecha_asignacion', 'desc')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'rutinas' => $rutinas
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cargar rutinas: ' . $e->getMessage()
             ], 500);
         }
     }
